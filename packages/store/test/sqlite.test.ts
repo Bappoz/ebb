@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteStore } from '../src/sqlite.js';
 import { checksumOf } from '../src/checksum.js';
@@ -148,6 +149,24 @@ describe('SqliteStore', () => {
     expect(await second.versions('Pedido')).toHaveLength(1);
     expect(SCHEMA_VERSION).toBeGreaterThan(0);
     second.close();
+  });
+
+  it('aplica a migração das tabelas de instância', async () => {
+    const store = new SqliteStore({ path: join(dir, 'ebb.db') });
+    await store.deploy(input(XML_V1));
+    store.close();
+
+    const raw = new DatabaseSync(join(dir, 'ebb.db'));
+    const tables = raw
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+      .all()
+      .map((row) => row.name);
+    raw.close();
+
+    expect(SCHEMA_VERSION).toBe(2);
+    expect(tables).toContain('instances');
+    expect(tables).toContain('instance_journal');
+    expect(tables).toContain('instance_state');
   });
 });
 
