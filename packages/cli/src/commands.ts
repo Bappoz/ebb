@@ -2,6 +2,7 @@ import { basename } from 'node:path';
 import { executableProcess, parseBpmn, validateBpmn } from '@bpmn-flow/core';
 import type { ValidationIssue } from '@bpmn-flow/core';
 import { checksumOf, type Store } from '@ebb/store';
+import { CHECK, CROSS, table, WARN } from './output.js';
 
 /**
  * As implementações dos comandos, sem `process`, `argv` nem IO — cada uma
@@ -12,10 +13,6 @@ export interface CommandResult {
   output: string;
   exitCode: number;
 }
-
-const CHECK = '✓';
-const CROSS = '✗';
-const WARN = '!';
 
 export interface DeployOptions {
   /** De onde o XML veio, só para o relatório. */
@@ -136,17 +133,4 @@ export async function versions(store: Store, processKey: string): Promise<Comman
 
 function issueLines(issues: ValidationIssue[]): string[] {
   return issues.map((issue) => `  ${issue.severity === 'error' ? CROSS : WARN} ${issue.message}`);
-}
-
-/** Tabela de largura fixa, alinhada pela coluna mais larga. */
-function table(header: string[], rows: string[][]): string {
-  const widths = header.map((title, column) =>
-    Math.max(title.length, ...rows.map((row) => (row[column] ?? '').length)),
-  );
-  const line = (cells: string[]): string =>
-    cells
-      .map((cell, column) => cell.padEnd(widths[column] ?? 0))
-      .join('  ')
-      .trimEnd();
-  return [line(header), ...rows.map(line)].join('\n');
 }
