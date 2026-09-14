@@ -95,6 +95,7 @@ describe('resolução por prefixo', () => {
     const result = await showInstance(store, runtime, 'abc');
 
     expect(result.exitCode).toBe(1);
+    expect(result.output).toContain('2 instâncias');
     expect(result.output).toContain('abc1def');
     expect(result.output).toContain('abc2def');
   });
@@ -112,6 +113,20 @@ describe('resolução por prefixo', () => {
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain('total');
     expect(result.output).toContain('42');
+  });
+
+  it('não mostra a tabela de pendentes quando não há tarefa parada', async () => {
+    await startInstance(runtime, 'Pedido', {});
+    const view = await runtime.inspect('abc1def');
+    const [task] = view.tasks;
+    if (!task) throw new Error('nenhuma tarefa pendente');
+    await completeTask(store, runtime, 'abc1', task.tokenId, {});
+
+    const result = await showInstance(store, runtime, 'abc1');
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('completed');
+    expect(result.output).not.toContain('TOKEN');
   });
 });
 
