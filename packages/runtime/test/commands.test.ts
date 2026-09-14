@@ -24,7 +24,10 @@ async function pedido(): Promise<ProcessModel> {
 describe('applyCommand', () => {
   it('start leva a execução até o primeiro ponto de espera', async () => {
     const engine = new WorkflowEngine(await pedido(), { variables: { total: 42 } });
-    const snapshot = await applyCommand(engine, { type: 'start', variables: { total: 42 } });
+    // Valores diferentes de propósito: as variáveis do comando existem para o
+    // replay reconstruir o motor, e `applyCommand` não as lê. Se lesse, o
+    // snapshot mostraria 999.
+    const snapshot = await applyCommand(engine, { type: 'start', variables: { total: 999 } });
 
     expect(snapshot.status).toBe('waiting');
     expect(snapshot.variables).toMatchObject({ total: 42 });
