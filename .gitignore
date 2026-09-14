@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+
+# Dados locais do runtime (journal, deployments)
+.ebb/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Ambiente
+.env
+.env.*
+!.env.example
+
+# Dependência local do bpmn-flow enquanto ele não está no npm
+.deps/

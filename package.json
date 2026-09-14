@@ -1,0 +1,43 @@
+{
+  "name": "ebb",
+  "version": "0.0.0",
+  "private": true,
+  "description": "BPMN 2.0 process orchestration you can rewind: durable execution, a journal you can replay, and processes you test like code.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Bappoz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bappoz/ebb.git"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @ebb/store && npm run build -w @ebb/cli",
+    "prepare": "npm run build",
+    "verify": "npm run build && npm run format:check && npm run lint && npm run typecheck && npm run coverage",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest",
+    "coverage": "npm run build && vitest run --coverage",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^10.7.0",
+    "prettier": "^3.9.5",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10"
+  }
+}

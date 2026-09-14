@@ -1,0 +1,12 @@
+{
+  // Programa que o linter checa: os fontes mais os configs de ferramenta, que
+  // nenhum tsconfig de build inclui.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["*.ts"]
+}

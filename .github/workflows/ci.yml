@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24, 26]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: ebb
+
+      # bpmn-flow ainda não está no npm, então entra como dependência de
+      # caminho. Os dois repositórios ficam lado a lado aqui como ficam na
+      # máquina, para que `file:../bpmn-flow/...` resolva igual nos dois lugares.
+      # Isto sai quando @bpmn-flow/core for publicado.
+      - uses: actions/checkout@v5
+        with:
+          repository: Bappoz/bpmn-flow
+          ref: master
+          path: bpmn-flow
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Build bpmn-flow
+        working-directory: bpmn-flow
+        run: npm ci
+
+      - name: Install
+        working-directory: ebb
+        run: npm install
+
+      - name: Format
+        working-directory: ebb
+        run: npm run format:check
+
+      - name: Lint
+        working-directory: ebb
+        run: npm run lint
+
+      - name: Typecheck
+        working-directory: ebb
+        run: npm run typecheck
+
+      - name: Coverage
+        working-directory: ebb
+        run: npm run coverage
+
+      - name: Audit
+        working-directory: ebb
+        run: npm audit --audit-level=high
