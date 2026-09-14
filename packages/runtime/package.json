@@ -1,7 +1,7 @@
 {
-  "name": "@ebb/cli",
+  "name": "@ebb/runtime",
   "version": "0.0.0",
-  "description": "ebb from the terminal: deploy a BPMN diagram and see what is deployed.",
+  "description": "Instance lifecycle for ebb: applies a command to a process, journals it, and persists the state it produced.",
   "type": "module",
   "license": "Apache-2.0",
   "main": "./dist/index.js",
@@ -11,9 +11,6 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
-  },
-  "bin": {
-    "ebb": "./dist/bin.js"
   },
   "files": [
     "dist"
@@ -25,7 +22,6 @@
   },
   "dependencies": {
     "@bpmn-flow/core": "file:../../../bpmn-flow/packages/core",
-    "@ebb/runtime": "^0.0.0",
     "@ebb/store": "^0.0.0"
   }
 }

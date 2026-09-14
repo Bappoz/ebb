@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { transaction } from './tx.js';
 
 /**
  * Uma migração de esquema. São aplicadas em ordem e registradas, para que um
@@ -26,6 +27,46 @@ const MIGRATIONS: Migration[] = [
         PRIMARY KEY (process_key, version)
       );
       CREATE INDEX deployments_checksum ON deployments (process_key, checksum);
+    `,
+  },
+  // `version` fica congelada na instância de propósito: um redeploy não pode
+  // trocar o modelo debaixo de uma instância viva. `at` é o relógio do motor,
+  // que o replay reinjeta; `recorded_at` é o relógio de parede, que só serve
+  // para auditoria — os dois divergem num tick com instante explícito.
+  {
+    version: 2,
+    name: 'instances',
+    up: `
+      CREATE TABLE instances (
+        id           TEXT PRIMARY KEY,
+        process_key  TEXT    NOT NULL,
+        version      INTEGER NOT NULL,
+        status       TEXT    NOT NULL,
+        seq          INTEGER NOT NULL,
+        created_at   TEXT    NOT NULL,
+        updated_at   TEXT    NOT NULL,
+        FOREIGN KEY (process_key, version) REFERENCES deployments (process_key, version)
+      );
+      CREATE INDEX instances_process ON instances (process_key, created_at DESC);
+
+      CREATE TABLE instance_journal (
+        instance_id  TEXT    NOT NULL,
+        seq          INTEGER NOT NULL,
+        type         TEXT    NOT NULL,
+        payload      TEXT    NOT NULL,
+        at           INTEGER NOT NULL,
+        recorded_at  TEXT    NOT NULL,
+        PRIMARY KEY (instance_id, seq),
+        FOREIGN KEY (instance_id) REFERENCES instances (id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE instance_state (
+        instance_id     TEXT PRIMARY KEY,
+        seq             INTEGER NOT NULL,
+        engine_version  INTEGER NOT NULL,
+        state           TEXT    NOT NULL,
+        FOREIGN KEY (instance_id) REFERENCES instances (id) ON DELETE CASCADE
+      );
     `,
   },
 ];
@@ -58,15 +99,10 @@ export function migrate(db: DatabaseSync): number {
   const record = db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)');
   for (const migration of MIGRATIONS) {
     if (migration.version <= current) continue;
-    db.exec('BEGIN');
-    try {
+    transaction(db, () => {
       db.exec(migration.up);
       record.run(migration.version, new Date().toISOString());
-      db.exec('COMMIT');
-    } catch (error) {
-      db.exec('ROLLBACK');
-      throw error;
-    }
+    });
   }
   return SCHEMA_VERSION;
 }

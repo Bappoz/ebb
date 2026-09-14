@@ -1,6 +1,7 @@
 /**
- * O que o ebb guarda. Neste estágio, só definições de processo publicadas —
- * o journal de execução entra quando o runtime entrar.
+ * O que o ebb guarda: definições de processo publicadas e, para cada
+ * instância, a linha atual, o journal de comandos aplicados e o snapshot do
+ * motor que o último comando produziu.
  */
 
 /** Uma definição de processo publicada, numa versão. */
@@ -50,6 +51,77 @@ export interface ProcessSummary {
 }
 
 /**
+ * O estado de execução de uma instância.
+ *
+ * Repete `ExecutionStatus` do `@bpmn-flow/core` de propósito: o store é
+ * persistência e não conhece o motor. Os dois conjuntos têm de continuar
+ * iguais, e é o `@ebb/runtime` que falha em compilar se divergirem, ao atribuir
+ * um ao outro.
+ */
+export type InstanceStatus = 'idle' | 'running' | 'waiting' | 'completed' | 'terminated' | 'failed';
+
+/** Uma instância de processo em execução (ou já terminada). */
+export interface InstanceRecord {
+  id: string;
+  processKey: string;
+  /** A versão publicada com que ela começou, congelada aqui. */
+  version: number;
+  status: InstanceStatus;
+  /** Número do último comando aplicado; o primeiro é 1. */
+  seq: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Um comando aplicado a uma instância, como o journal o guarda. */
+export interface JournalEntry {
+  seq: number;
+  type: string;
+  payload: Record<string, unknown>;
+  /** Relógio do motor, epoch ms — é isto que o replay reinjeta. */
+  at: number;
+  /** Relógio de parede, ISO-8601. Só serve para auditoria. */
+  recordedAt: string;
+}
+
+/** O comando a gravar, sem o número de sequência, que é do store. */
+export interface CommandInput {
+  type: string;
+  payload: Record<string, unknown>;
+  at: number;
+}
+
+/**
+ * O snapshot do motor, já serializado: o store guarda texto e um número de
+ * versão de esquema, e não sabe o que há dentro.
+ */
+export interface EngineStateInput {
+  engineVersion: number;
+  json: string;
+}
+
+export interface StoredEngineState extends EngineStateInput {
+  /** O comando que produziu este estado. */
+  seq: number;
+}
+
+export interface CreateInstanceInput {
+  id: string;
+  processKey: string;
+  version: number;
+  status: InstanceStatus;
+  command: CommandInput;
+  state: EngineStateInput;
+}
+
+export interface AppendInput {
+  instanceId: string;
+  status: InstanceStatus;
+  command: CommandInput;
+  state: EngineStateInput;
+}
+
+/**
  * O contrato de persistência.
  *
  * Existe para que SQLite (o padrão, sem infraestrutura) e Postgres (quando
@@ -70,6 +142,34 @@ export interface Store {
 
   /** Uma versão específica, ou a mais recente quando `version` é omitido. */
   read(processKey: string, version?: number): Promise<Deployment | undefined>;
+
+  /**
+   * Cria uma instância: a linha, a primeira entrada do journal (`seq` 1) e o
+   * estado que ela produziu — numa transação só.
+   */
+  createInstance(input: CreateInstanceInput): Promise<InstanceRecord>;
+
+  /**
+   * Grava mais um comando aplicado: a entrada do journal, o estado resultante
+   * e a linha da instância — numa transação só.
+   */
+  append(input: AppendInput): Promise<InstanceRecord>;
+
+  readInstance(id: string): Promise<InstanceRecord | undefined>;
+
+  readInstanceState(id: string): Promise<StoredEngineState | undefined>;
+
+  /** O journal de uma instância, do primeiro comando ao último. */
+  journal(id: string): Promise<JournalEntry[]>;
+
+  /** Toda instância, da mais nova para a mais antiga. */
+  listInstances(): Promise<InstanceRecord[]>;
+
+  /**
+   * Instâncias cujo id começa por `prefix`, para que o CLI aceite um prefixo
+   * curto como o git. Vazio quando nenhuma casa.
+   */
+  findInstances(prefix: string): Promise<InstanceRecord[]>;
 
   close(): void;
 }

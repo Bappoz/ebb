@@ -98,4 +98,79 @@ describe('ebb (binário construído)', () => {
     expect((await ebb('ls')).stdout).toContain('Nada publicado');
     expect((await ebb('ls', '--store', 'outro.db')).stdout).toContain('Pedido');
   });
+
+  it('uma instância sobrevive à morte do processo', async () => {
+    await ebb('deploy', 'pedido.bpmn');
+
+    // Processo 1: cria.
+    const started = await ebb('start', 'Pedido', '--var', 'total=42');
+    expect(started.code).toBe(0);
+    const id = started.stdout.match(/instância (\S+)/)?.[1];
+    if (!id) throw new Error(`sem id na saída: ${started.stdout}`);
+
+    // Processo 2: outro processo do SO, nada em memória do anterior.
+    const shown = await ebb('show', id.slice(0, 8));
+    expect(shown.code).toBe(0);
+    expect(shown.stdout).toContain('waiting');
+    expect(shown.stdout).toContain('Separar itens');
+    expect(shown.stdout).toContain('42');
+
+    const token = shown.stdout.match(/^(\S+)\s+Separar\s/m)?.[1];
+    if (!token) throw new Error(`sem token na saída: ${shown.stdout}`);
+
+    // Processo 3: continua de onde o processo 1 parou.
+    const done = await ebb('complete', id.slice(0, 8), token, '--var', 'separadoPor=ana');
+    expect(done.code).toBe(0);
+    expect(done.stdout).toContain('completed');
+
+    // Processo 4: o estado final persistiu.
+    const after = await ebb('show', id.slice(0, 8));
+    expect(after.stdout).toContain('completed');
+    expect(after.stdout).toContain('ana');
+
+    // O journal tem os dois comandos, que é o que o chunk 3 vai replayar.
+    const journal = await ebb('journal', id.slice(0, 8));
+    expect(journal.stdout).toContain('start');
+    expect(journal.stdout).toContain('completeTask');
+  });
+
+  it('ps lista o que start criou', async () => {
+    await ebb('deploy', 'pedido.bpmn');
+    await ebb('start', 'Pedido');
+
+    const listed = await ebb('ps');
+    expect(listed.code).toBe(0);
+    expect(listed.stdout).toContain('Pedido');
+    expect(listed.stdout).toContain('waiting');
+  });
+
+  it('sai com 2 quando falta o argumento de um comando de instância', async () => {
+    expect((await ebb('start')).code).toBe(2);
+    expect((await ebb('show')).code).toBe(2);
+    expect((await ebb('complete', 'abc')).code).toBe(2);
+  });
+
+  it('tick --at aplica um instante explícito e o journal ganha a entrada', async () => {
+    await ebb('deploy', 'pedido.bpmn');
+    const started = await ebb('start', 'Pedido');
+    const id = started.stdout.match(/instância (\S+)/)?.[1];
+    if (!id) throw new Error(`sem id na saída: ${started.stdout}`);
+
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const ticked = await ebb('tick', id.slice(0, 8), '--at', future);
+    expect(ticked.code).toBe(0);
+
+    const journal = await ebb('journal', id.slice(0, 8));
+    expect(journal.stdout).toContain('tick');
+  });
+
+  it('sai com 2 quando --at é malformado', async () => {
+    await ebb('deploy', 'pedido.bpmn');
+    const started = await ebb('start', 'Pedido');
+    const id = started.stdout.match(/instância (\S+)/)?.[1];
+    if (!id) throw new Error(`sem id na saída: ${started.stdout}`);
+
+    const bad = await ebb('tick', id.slice(0, 8), '--at', 'não-é-uma-data');
+    expect(bad.code).toBe(2);
+  });
 });

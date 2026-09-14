@@ -33,3 +33,17 @@ export function integer(row: Row, column: string): number {
   if (typeof value === 'bigint') return Number(value);
   return fail(column, value ?? null, 'inteiro');
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Coluna de texto que guarda um objeto JSON. O `JSON.parse` devolve `any`, e
+ * aceitar isso seria o mesmo `as` que este módulo existe para evitar.
+ */
+export function jsonObject(row: Row, column: string): Record<string, unknown> {
+  const parsed: unknown = JSON.parse(text(row, column));
+  if (!isRecord(parsed)) throw new TypeError(`Coluna "${column}" deveria ser um objeto JSON.`);
+  return parsed;
+}
