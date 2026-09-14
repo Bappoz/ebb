@@ -16,13 +16,14 @@ decide as escolhas de arquitetura — nada pode quebrar a reprodutibilidade.
 
 ## Pacotes
 
-| Pacote       | O que é                                                            |
-| ------------ | ------------------------------------------------------------------ |
-| `@ebb/store` | Persistência. SQLite via `node:sqlite`; Postgres quando houver HA. |
-| `@ebb/cli`   | `ebb deploy`, `ebb ls`, `ebb versions`.                            |
+| Pacote         | O que é                                                            |
+| -------------- | ------------------------------------------------------------------ |
+| `@ebb/store`   | Persistência. SQLite via `node:sqlite`; Postgres quando houver HA. |
+| `@ebb/runtime` | Ciclo de vida de instância: aplica comando, journala, persiste.    |
+| `@ebb/cli`     | `ebb deploy`, `ebb ls`, `ebb versions`, e o ciclo de instância.    |
 
-Os demais (`runtime`, `api`, `sdk`, `testing`, `connectors`, `console`) entram
-nos chunks seguintes — ver `docs/superpowers/specs/`.
+Os demais (`api`, `sdk`, `testing`, `connectors`, `console`) entram nos chunks
+seguintes — ver `docs/superpowers/specs/`.
 
 ## Comandos
 

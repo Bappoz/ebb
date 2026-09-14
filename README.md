@@ -60,6 +60,17 @@ PROCESSO             CHAVE            ATUAL  HISTÓRICO  PUBLICADO              
 Processo de Compras  Process_Compras  v1     1 versão   2026-09-14T11:55:23.453Z  processo-compras.bpmn
 ```
 
+```bash
+ebb start Pedido --var total=42     # instancia; imprime o id
+ebb ps                              # o que está rodando
+ebb show <id>                       # estado, variáveis, pendências
+ebb complete <id> <token>           # conclui a tarefa parada
+ebb journal <id>                    # os comandos aplicados, em ordem
+```
+
+Mate o processo entre um comando e outro: o estado está no `.ebb/ebb.db`, e a
+próxima invocação continua de onde a anterior parou.
+
 O banco fica em `.ebb/ebb.db`, relativo ao diretório de trabalho — como
 `node_modules/`, é do projeto. Mude com `--store` ou `EBB_STORE`.
 
