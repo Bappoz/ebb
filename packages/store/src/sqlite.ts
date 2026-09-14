@@ -203,6 +203,20 @@ export class SqliteStore implements Store {
     return Promise.resolve(rows.map(toJournalEntry));
   }
 
+  listInstances(): Promise<InstanceRecord[]> {
+    const rows = this.db.prepare('SELECT * FROM instances ORDER BY created_at DESC, id DESC').all();
+    return Promise.resolve(rows.map(toInstance));
+  }
+
+  findInstances(prefix: string): Promise<InstanceRecord[]> {
+    // `substr` em vez de `LIKE`: num LIKE o `_` e o `%` que o usuário digitasse
+    // virariam curinga, e um prefixo não é um padrão.
+    const rows = this.db
+      .prepare('SELECT * FROM instances WHERE substr(id, 1, length(?)) = ? ORDER BY id')
+      .all(prefix, prefix);
+    return Promise.resolve(rows.map(toInstance));
+  }
+
   close(): void {
     this.db.close();
   }

@@ -162,3 +162,62 @@ describe('leituras e escritas sem a instância', () => {
     store.close();
   });
 });
+
+describe('consulta de instância', () => {
+  it('lista da mais nova para a mais antiga', async () => {
+    let tick = 0;
+    const store = await seeded(
+      new SqliteStore({ path: ':memory:', now: () => new Date(1_700_000_000_000 + tick++ * 1000) }),
+    );
+    await store.createInstance(creation('aaa1'));
+    await store.createInstance(creation('bbb2'));
+
+    expect((await store.listInstances()).map((entry) => entry.id)).toEqual(['bbb2', 'aaa1']);
+    store.close();
+  });
+
+  it('acha por prefixo e devolve todas as ambíguas', async () => {
+    const store = await seeded(new SqliteStore({ path: ':memory:' }));
+    await store.createInstance(creation('ab11'));
+    await store.createInstance(creation('ab22'));
+    await store.createInstance(creation('cd33'));
+
+    expect((await store.findInstances('ab')).map((entry) => entry.id).sort()).toEqual([
+      'ab11',
+      'ab22',
+    ]);
+    expect(await store.findInstances('cd33')).toHaveLength(1);
+    expect(await store.findInstances('zz')).toEqual([]);
+    store.close();
+  });
+
+  it('trata o prefixo como texto, não como padrão de LIKE', async () => {
+    const store = await seeded(new SqliteStore({ path: ':memory:' }));
+    await store.createInstance(creation('ab11'));
+
+    // `_` e `%` casariam com qualquer coisa num LIKE; aqui não casam com nada.
+    expect(await store.findInstances('a_')).toEqual([]);
+    expect(await store.findInstances('%')).toEqual([]);
+    store.close();
+  });
+
+  it('devolve o journal na ordem em que os comandos foram aplicados', async () => {
+    const store = await seeded(new SqliteStore({ path: ':memory:' }));
+    await store.createInstance(creation());
+    await store.append({
+      instanceId: 'i1',
+      status: 'completed',
+      command: { type: 'completeTask', payload: { tokenId: 't1' }, at: 1_700_000_001_000 },
+      state: { engineVersion: 10, json: '{}' },
+    });
+
+    const entries = await store.journal('i1');
+    expect(entries.map((entry) => [entry.seq, entry.type])).toEqual([
+      [1, 'start'],
+      [2, 'completeTask'],
+    ]);
+    expect(entries[0]?.payload).toEqual({ variables: { total: 42 } });
+    expect(entries[0]?.at).toBe(1_700_000_000_000);
+    store.close();
+  });
+});

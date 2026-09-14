@@ -161,5 +161,14 @@ export interface Store {
   /** O journal de uma instância, do primeiro comando ao último. */
   journal(id: string): Promise<JournalEntry[]>;
 
+  /** Toda instância, da mais nova para a mais antiga. */
+  listInstances(): Promise<InstanceRecord[]>;
+
+  /**
+   * Instâncias cujo id começa por `prefix`, para que o CLI aceite um prefixo
+   * curto como o git. Vazio quando nenhuma casa.
+   */
+  findInstances(prefix: string): Promise<InstanceRecord[]>;
+
   close(): void;
 }
