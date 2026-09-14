@@ -63,6 +63,12 @@ describe('EbbRuntime.start', () => {
     await expect(runtime.start('Inexistente')).rejects.toThrow('Inexistente');
     store.close();
   });
+
+  it('nomeia a versão pedida quando ela não está publicada', async () => {
+    const { store, runtime } = await fixture();
+    await expect(runtime.start('Pedido', { version: 7 })).rejects.toThrow('Pedido v7');
+    store.close();
+  });
 });
 
 describe('EbbRuntime.apply', () => {
@@ -143,6 +149,23 @@ describe('EbbRuntime.inspect', () => {
 
     await expect(runtime.inspect('inst-1')).rejects.toThrow(EngineStateMismatchError);
     await expect(runtime.inspect('inst-1')).rejects.toThrow(/journal está intacto/);
+    store.close();
+  });
+});
+
+describe('a versão congelada', () => {
+  it('continua na versão com que começou, mesmo depois de um redeploy', async () => {
+    const { store, runtime } = await fixture();
+    await runtime.start('Pedido');
+
+    const v2 = PEDIDO.replace('Separar itens', 'Separar e conferir');
+    await store.deploy({ processKey: 'Pedido', xml: v2, checksum: checksumOf(v2) });
+
+    // A instância viva continua com o modelo v1: publicar não pode trocar o
+    // desenho debaixo de quem já está rodando.
+    const view = await runtime.inspect('inst-1');
+    expect(view.instance.version).toBe(1);
+    expect(view.tasks[0]?.name).toBe('Separar itens');
     store.close();
   });
 });
