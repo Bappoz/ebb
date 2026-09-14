@@ -24,3 +24,7 @@ coverage/
 
 # Dependência local do bpmn-flow enquanto ele não está no npm
 .deps/
+
+# Rascunho de agente (plano em execução, relatórios). O git já ignora por um
+# .gitignore aninhado; aqui é para o prettier, que só lê o da raiz.
+.superpowers/
