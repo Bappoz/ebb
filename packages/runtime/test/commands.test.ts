@@ -2,18 +2,9 @@ import { parseBpmn, WorkflowEngine } from '@bpmn-flow/core';
 import type { ProcessModel } from '@bpmn-flow/core';
 import { describe, expect, it } from 'vitest';
 import { applyCommand, payloadOf } from '../src/commands.js';
+import { PEDIDO } from './fixtures.js';
 
-const PEDIDO = `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  targetNamespace="http://ebb.test" id="Defs">
-  <bpmn:process id="Pedido" name="Processo de Pedido" isExecutable="true">
-    <bpmn:startEvent id="Start" />
-    <bpmn:userTask id="Separar" name="Separar itens" />
-    <bpmn:endEvent id="End" />
-    <bpmn:sequenceFlow id="f0" sourceRef="Start" targetRef="Separar" />
-    <bpmn:sequenceFlow id="f1" sourceRef="Separar" targetRef="End" />
-  </bpmn:process>
-</bpmn:definitions>`;
+const ENGINE_OPTIONS = { mode: 'automation', maxSteps: 100_000, expressions: 'safe' } as const;
 
 async function pedido(): Promise<ProcessModel> {
   const [first] = (await parseBpmn(PEDIDO)).processes;
@@ -27,7 +18,11 @@ describe('applyCommand', () => {
     // Valores diferentes de propósito: as variáveis do comando existem para o
     // replay reconstruir o motor, e `applyCommand` não as lê. Se lesse, o
     // snapshot mostraria 999.
-    const snapshot = await applyCommand(engine, { type: 'start', variables: { total: 999 } });
+    const snapshot = await applyCommand(engine, {
+      type: 'start',
+      variables: { total: 999 },
+      engine: ENGINE_OPTIONS,
+    });
 
     expect(snapshot.status).toBe('waiting');
     expect(snapshot.variables).toMatchObject({ total: 42 });
@@ -35,7 +30,7 @@ describe('applyCommand', () => {
 
   it('completeTask conclui a tarefa parada e segue', async () => {
     const engine = new WorkflowEngine(await pedido());
-    await applyCommand(engine, { type: 'start' });
+    await applyCommand(engine, { type: 'start', engine: ENGINE_OPTIONS });
     const [task] = engine.tasks();
     if (!task) throw new Error('nenhuma tarefa pendente');
 
@@ -51,7 +46,7 @@ describe('applyCommand', () => {
 
   it('tick usa o relógio congelado do motor, sem argumento próprio', async () => {
     const engine = new WorkflowEngine(await pedido(), { now: () => 1_700_000_000_000 });
-    await applyCommand(engine, { type: 'start' });
+    await applyCommand(engine, { type: 'start', engine: ENGINE_OPTIONS });
 
     // Nada vencido: tick é uma não-operação, e não pode explodir por isso.
     const snapshot = await applyCommand(engine, { type: 'tick' });
@@ -60,7 +55,7 @@ describe('applyCommand', () => {
 
   it('signal recusa um evento que o diagrama não tem', async () => {
     const engine = new WorkflowEngine(await pedido());
-    await applyCommand(engine, { type: 'start' });
+    await applyCommand(engine, { type: 'start', engine: ENGINE_OPTIONS });
 
     await expect(applyCommand(engine, { type: 'signal', name: 'Inexistente' })).rejects.toThrow();
   });

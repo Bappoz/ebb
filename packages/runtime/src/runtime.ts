@@ -64,16 +64,29 @@ export class EbbRuntime {
     const model = await parseBpmn(deployment.xml);
     const process = executableProcess(model);
     const at = this.now().getTime();
-    const command: InstanceCommand = {
-      type: 'start',
-      ...(options.variables ? { variables: options.variables } : {}),
-    };
 
     const engine = new WorkflowEngine(process, {
       processes: model.processes,
       now: () => at,
       ...(options.variables ? { variables: options.variables } : {}),
     });
+    // mode, maxSteps e expressions não são passados acima — o motor nasce no
+    // padrão de @bpmn-flow/core. Lemos os três de volta do próprio motor, em
+    // vez de repetir esse padrão aqui, para o journal não ter uma segunda
+    // fonte da verdade que possa divergir dele (é o mesmo motivo pelo qual
+    // ENGINE_STATE_VERSION foi de 9 para 10: expressions passou a fazer parte
+    // do estado). Sem isso, um replay a partir só do journal teria de
+    // adivinhar com que opções a instância nasceu.
+    const engineState = engine.getState();
+    const command: InstanceCommand = {
+      type: 'start',
+      ...(options.variables ? { variables: options.variables } : {}),
+      engine: {
+        mode: engineState.mode,
+        maxSteps: engineState.maxSteps,
+        expressions: engineState.expressions,
+      },
+    };
     const snapshot = await applyCommand(engine, command);
 
     const instance = await this.store.createInstance({

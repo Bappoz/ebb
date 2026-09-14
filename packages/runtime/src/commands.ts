@@ -1,4 +1,21 @@
-import type { ExecutionSnapshot, WorkflowEngine } from '@bpmn-flow/core';
+import type {
+  EngineMode,
+  ExecutionSnapshot,
+  ExpressionMode,
+  WorkflowEngine,
+} from '@bpmn-flow/core';
+
+/**
+ * Os três campos de `EngineOptions` que mudam a execução — `expressions`
+ * decide, por exemplo, qual ramo um gateway toma. Vivem no comando `start`
+ * para que um replay do zero saiba com que motor a instância nasceu, em vez
+ * de herdar o padrão de `@bpmn-flow/core` do momento em que roda o replay.
+ */
+export interface StartEngineOptions {
+  mode: EngineMode;
+  maxSteps: number;
+  expressions: ExpressionMode;
+}
 
 /**
  * Tudo que muda uma instância, como dado.
@@ -8,12 +25,10 @@ import type { ExecutionSnapshot, WorkflowEngine } from '@bpmn-flow/core';
  * exatamente o que significou quando foi aplicado.
  */
 export type InstanceCommand =
-  | { type: 'start'; variables?: Record<string, unknown> }
+  | { type: 'start'; variables?: Record<string, unknown>; engine: StartEngineOptions }
   | { type: 'completeTask'; tokenId: string; output?: Record<string, unknown> }
   | { type: 'signal'; name: string; output?: Record<string, unknown> }
   | { type: 'tick' };
-
-export type CommandType = InstanceCommand['type'];
 
 /** Aplica um comando ao motor. O único caminho — ao vivo e no replay. */
 export function applyCommand(

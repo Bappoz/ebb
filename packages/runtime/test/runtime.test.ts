@@ -54,7 +54,22 @@ describe('EbbRuntime.start', () => {
 
     const [first] = await store.journal('inst-1');
     expect(first).toMatchObject({ seq: 1, type: 'start', at: AT });
-    expect(first?.payload).toEqual({ variables: { total: 42 } });
+    expect(first?.payload).toEqual({
+      variables: { total: 42 },
+      engine: { mode: 'automation', maxSteps: 100_000, expressions: 'safe' },
+    });
+    store.close();
+  });
+
+  it('grava mode, maxSteps e expressions com que o motor nasceu, não só as variáveis', async () => {
+    const { store, runtime } = await fixture();
+    await runtime.start('Pedido');
+
+    const [first] = await store.journal('inst-1');
+    const payload = first?.payload as {
+      engine?: { mode: string; maxSteps: number; expressions: string };
+    };
+    expect(payload.engine).toEqual({ mode: 'automation', maxSteps: 100_000, expressions: 'safe' });
     store.close();
   });
 
