@@ -1,9 +1,24 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { toInstance, toJournalEntry, toStoredState } from './instances.js';
 import { migrate } from './migrations.js';
 import { integer, optionalText, text, type Row } from './rows.js';
-import type { DeployInput, DeployResult, Deployment, ProcessSummary, Store } from './types.js';
+import { transaction } from './tx.js';
+import type {
+  AppendInput,
+  CommandInput,
+  CreateInstanceInput,
+  DeployInput,
+  DeployResult,
+  Deployment,
+  EngineStateInput,
+  InstanceRecord,
+  JournalEntry,
+  ProcessSummary,
+  Store,
+  StoredEngineState,
+} from './types.js';
 
 function toDeployment(row: Row): Deployment {
   const name = optionalText(row, 'name');
@@ -30,6 +45,21 @@ function toSummary(row: Row): ProcessSummary {
     ...(name === undefined ? {} : { name }),
     ...(source === undefined ? {} : { source }),
   };
+}
+
+/**
+ * Entrega um resultado síncrono como a interface promete — o erro inclusive.
+ *
+ * `createInstance` e `append` falham de verdade (chave estrangeira, disco), e
+ * um método que às vezes lança e às vezes rejeita quebraria quem usa `.catch()`
+ * e a implementação Postgres que um dia vai rejeitar sempre.
+ */
+function promised<T>(fn: () => T): Promise<T> {
+  try {
+    return Promise.resolve(fn());
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+  }
 }
 
 export interface SqliteStoreOptions {
@@ -125,8 +155,94 @@ export class SqliteStore implements Store {
     return Promise.resolve(row ? toDeployment(row) : undefined);
   }
 
+  createInstance(input: CreateInstanceInput): Promise<InstanceRecord> {
+    const at = this.now().toISOString();
+    return promised(() =>
+      transaction(this.db, () => {
+        this.db
+          .prepare(
+            `INSERT INTO instances (id, process_key, version, status, seq, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 1, ?, ?)`,
+          )
+          .run(input.id, input.processKey, input.version, input.status, at, at);
+        this.writeJournal(input.id, 1, input.command);
+        this.writeEngineState(input.id, 1, input.state);
+        return this.instanceRow(input.id);
+      }),
+    );
+  }
+
+  append(input: AppendInput): Promise<InstanceRecord> {
+    return promised(() => {
+      const seq = this.instanceRow(input.instanceId).seq + 1;
+      return transaction(this.db, () => {
+        this.writeJournal(input.instanceId, seq, input.command);
+        this.writeEngineState(input.instanceId, seq, input.state);
+        this.db
+          .prepare('UPDATE instances SET status = ?, seq = ?, updated_at = ? WHERE id = ?')
+          .run(input.status, seq, this.now().toISOString(), input.instanceId);
+        return this.instanceRow(input.instanceId);
+      });
+    });
+  }
+
+  readInstance(id: string): Promise<InstanceRecord | undefined> {
+    const row = this.db.prepare('SELECT * FROM instances WHERE id = ?').get(id);
+    return Promise.resolve(row ? toInstance(row) : undefined);
+  }
+
+  readInstanceState(id: string): Promise<StoredEngineState | undefined> {
+    const row = this.db.prepare('SELECT * FROM instance_state WHERE instance_id = ?').get(id);
+    return Promise.resolve(row ? toStoredState(row) : undefined);
+  }
+
+  journal(id: string): Promise<JournalEntry[]> {
+    const rows = this.db
+      .prepare('SELECT * FROM instance_journal WHERE instance_id = ? ORDER BY seq')
+      .all(id);
+    return Promise.resolve(rows.map(toJournalEntry));
+  }
+
   close(): void {
     this.db.close();
+  }
+
+  /**
+   * A escrita do snapshot, separada por ser o passo que o teste de atomicidade
+   * faz falhar: o journal já foi escrito quando ela roda, e é isso que a
+   * transação tem de desfazer.
+   */
+  protected writeEngineState(instanceId: string, seq: number, state: EngineStateInput): void {
+    this.db
+      .prepare(
+        `INSERT INTO instance_state (instance_id, seq, engine_version, state)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (instance_id) DO UPDATE SET seq = excluded.seq,
+           engine_version = excluded.engine_version, state = excluded.state`,
+      )
+      .run(instanceId, seq, state.engineVersion, state.json);
+  }
+
+  private writeJournal(instanceId: string, seq: number, command: CommandInput): void {
+    this.db
+      .prepare(
+        `INSERT INTO instance_journal (instance_id, seq, type, payload, at, recorded_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        instanceId,
+        seq,
+        command.type,
+        JSON.stringify(command.payload),
+        command.at,
+        this.now().toISOString(),
+      );
+  }
+
+  private instanceRow(id: string): InstanceRecord {
+    const row = this.db.prepare('SELECT * FROM instances WHERE id = ?').get(id);
+    if (!row) throw new Error(`Nenhuma instância com o id "${id}".`);
+    return toInstance(row);
   }
 
   private latestDeployment(processKey: string): Deployment | undefined {
