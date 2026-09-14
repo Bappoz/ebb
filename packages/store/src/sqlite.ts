@@ -50,9 +50,11 @@ function toSummary(row: Row): ProcessSummary {
 /**
  * Entrega um resultado síncrono como a interface promete — o erro inclusive.
  *
- * `createInstance` e `append` falham de verdade (chave estrangeira, disco), e
- * um método que às vezes lança e às vezes rejeita quebraria quem usa `.catch()`
- * e a implementação Postgres que um dia vai rejeitar sempre.
+ * Todo método deste store roda `db.prepare(...)` ou um mapeador de linha de
+ * forma síncrona (chave estrangeira, disco, banco fechado, coluna com um
+ * valor que `rows.ts` não reconhece podem lançar); um método que às vezes
+ * lança e às vezes rejeita quebraria quem usa `.catch()` e a implementação
+ * Postgres que um dia vai rejeitar sempre.
  */
 function promised<T>(fn: () => T): Promise<T> {
   try {
@@ -91,68 +93,76 @@ export class SqliteStore implements Store {
   }
 
   deploy(input: DeployInput): Promise<DeployResult> {
-    const latest = this.latestDeployment(input.processKey);
-    // Mesmo conteúdo que a última versão: publicar de novo não é versão nova.
-    if (latest && latest.checksum === input.checksum) {
-      return Promise.resolve({ deployment: latest, created: false });
-    }
+    return promised(() => {
+      const latest = this.latestDeployment(input.processKey);
+      // Mesmo conteúdo que a última versão: publicar de novo não é versão nova.
+      if (latest && latest.checksum === input.checksum) {
+        return { deployment: latest, created: false };
+      }
 
-    const deployment: Deployment = {
-      processKey: input.processKey,
-      version: (latest?.version ?? 0) + 1,
-      xml: input.xml,
-      checksum: input.checksum,
-      deployedAt: this.now().toISOString(),
-      ...(input.name ? { name: input.name } : {}),
-      ...(input.source ? { source: input.source } : {}),
-    };
+      const deployment: Deployment = {
+        processKey: input.processKey,
+        version: (latest?.version ?? 0) + 1,
+        xml: input.xml,
+        checksum: input.checksum,
+        deployedAt: this.now().toISOString(),
+        ...(input.name ? { name: input.name } : {}),
+        ...(input.source ? { source: input.source } : {}),
+      };
 
-    this.db
-      .prepare(
-        `INSERT INTO deployments (process_key, version, name, xml, checksum, source, deployed_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        deployment.processKey,
-        deployment.version,
-        deployment.name ?? null,
-        deployment.xml,
-        deployment.checksum,
-        deployment.source ?? null,
-        deployment.deployedAt,
-      );
+      this.db
+        .prepare(
+          `INSERT INTO deployments (process_key, version, name, xml, checksum, source, deployed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          deployment.processKey,
+          deployment.version,
+          deployment.name ?? null,
+          deployment.xml,
+          deployment.checksum,
+          deployment.source ?? null,
+          deployment.deployedAt,
+        );
 
-    return Promise.resolve({ deployment, created: true });
+      return { deployment, created: true };
+    });
   }
 
   listProcesses(): Promise<ProcessSummary[]> {
-    const rows = this.db
-      .prepare(
-        `SELECT d.process_key, d.version, d.name, d.source, d.deployed_at, c.total
-           FROM deployments d
-           JOIN (SELECT process_key, MAX(version) AS version, COUNT(*) AS total
-                   FROM deployments GROUP BY process_key) c
-             ON c.process_key = d.process_key AND c.version = d.version
-          ORDER BY d.process_key`,
-      )
-      .all();
+    return promised(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT d.process_key, d.version, d.name, d.source, d.deployed_at, c.total
+             FROM deployments d
+             JOIN (SELECT process_key, MAX(version) AS version, COUNT(*) AS total
+                     FROM deployments GROUP BY process_key) c
+               ON c.process_key = d.process_key AND c.version = d.version
+            ORDER BY d.process_key`,
+        )
+        .all();
 
-    return Promise.resolve(rows.map(toSummary));
+      return rows.map(toSummary);
+    });
   }
 
   versions(processKey: string): Promise<Deployment[]> {
-    const rows = this.db
-      .prepare('SELECT * FROM deployments WHERE process_key = ? ORDER BY version DESC')
-      .all(processKey);
-    return Promise.resolve(rows.map(toDeployment));
+    return promised(() => {
+      const rows = this.db
+        .prepare('SELECT * FROM deployments WHERE process_key = ? ORDER BY version DESC')
+        .all(processKey);
+      return rows.map(toDeployment);
+    });
   }
 
   read(processKey: string, version?: number): Promise<Deployment | undefined> {
-    if (version === undefined) return Promise.resolve(this.latestDeployment(processKey));
-    const row = this.db
-      .prepare('SELECT * FROM deployments WHERE process_key = ? AND version = ?')
-      .get(processKey, version);
-    return Promise.resolve(row ? toDeployment(row) : undefined);
+    return promised(() => {
+      if (version === undefined) return this.latestDeployment(processKey);
+      const row = this.db
+        .prepare('SELECT * FROM deployments WHERE process_key = ? AND version = ?')
+        .get(processKey, version);
+      return row ? toDeployment(row) : undefined;
+    });
   }
 
   createInstance(input: CreateInstanceInput): Promise<InstanceRecord> {
@@ -187,34 +197,46 @@ export class SqliteStore implements Store {
   }
 
   readInstance(id: string): Promise<InstanceRecord | undefined> {
-    const row = this.db.prepare('SELECT * FROM instances WHERE id = ?').get(id);
-    return Promise.resolve(row ? toInstance(row) : undefined);
+    return promised(() => {
+      const row = this.db.prepare('SELECT * FROM instances WHERE id = ?').get(id);
+      return row ? toInstance(row) : undefined;
+    });
   }
 
   readInstanceState(id: string): Promise<StoredEngineState | undefined> {
-    const row = this.db.prepare('SELECT * FROM instance_state WHERE instance_id = ?').get(id);
-    return Promise.resolve(row ? toStoredState(row) : undefined);
+    return promised(() => {
+      const row = this.db.prepare('SELECT * FROM instance_state WHERE instance_id = ?').get(id);
+      return row ? toStoredState(row) : undefined;
+    });
   }
 
   journal(id: string): Promise<JournalEntry[]> {
-    const rows = this.db
-      .prepare('SELECT * FROM instance_journal WHERE instance_id = ? ORDER BY seq')
-      .all(id);
-    return Promise.resolve(rows.map(toJournalEntry));
+    return promised(() => {
+      const rows = this.db
+        .prepare('SELECT * FROM instance_journal WHERE instance_id = ? ORDER BY seq')
+        .all(id);
+      return rows.map(toJournalEntry);
+    });
   }
 
   listInstances(): Promise<InstanceRecord[]> {
-    const rows = this.db.prepare('SELECT * FROM instances ORDER BY created_at DESC, id DESC').all();
-    return Promise.resolve(rows.map(toInstance));
+    return promised(() => {
+      const rows = this.db
+        .prepare('SELECT * FROM instances ORDER BY created_at DESC, id DESC')
+        .all();
+      return rows.map(toInstance);
+    });
   }
 
   findInstances(prefix: string): Promise<InstanceRecord[]> {
-    // `substr` em vez de `LIKE`: num LIKE o `_` e o `%` que o usuário digitasse
-    // virariam curinga, e um prefixo não é um padrão.
-    const rows = this.db
-      .prepare('SELECT * FROM instances WHERE substr(id, 1, length(?)) = ? ORDER BY id')
-      .all(prefix, prefix);
-    return Promise.resolve(rows.map(toInstance));
+    return promised(() => {
+      // `substr` em vez de `LIKE`: num LIKE o `_` e o `%` que o usuário digitasse
+      // virariam curinga, e um prefixo não é um padrão.
+      const rows = this.db
+        .prepare('SELECT * FROM instances WHERE substr(id, 1, length(?)) = ? ORDER BY id')
+        .all(prefix, prefix);
+      return rows.map(toInstance);
+    });
   }
 
   close(): void {

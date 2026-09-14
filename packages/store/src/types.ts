@@ -1,6 +1,7 @@
 /**
- * O que o ebb guarda. Neste estágio, só definições de processo publicadas —
- * o journal de execução entra quando o runtime entrar.
+ * O que o ebb guarda: definições de processo publicadas e, para cada
+ * instância, a linha atual, o journal de comandos aplicados e o snapshot do
+ * motor que o último comando produziu.
  */
 
 /** Uma definição de processo publicada, numa versão. */

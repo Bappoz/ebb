@@ -102,6 +102,13 @@ journal (`at`), e o runtime o injeta como relógio do motor
 congelado — o `--at` do CLI é só quem escolhe esse instante em vez do relógio
 de parede.
 
+O id de um token também não precisa entrar no payload por ser aleatório: ele
+vem de `EngineState.tokenSeq`, um contador que faz parte do estado
+serializado. Um `completeTask` replayado a partir do mesmo journal reencontra
+o mesmo `tokenId` sem precisar gravá-lo em lugar nenhum além do próprio
+comando — é o que torna um replay funcional (chunk 3) suficiente com o que
+este chunk já grava.
+
 ## `@ebb/runtime`
 
 Sem estado entre comandos. Cada comando re-hidrata do snapshot, aplica, grava

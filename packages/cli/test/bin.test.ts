@@ -149,4 +149,28 @@ describe('ebb (binário construído)', () => {
     expect((await ebb('show')).code).toBe(2);
     expect((await ebb('complete', 'abc')).code).toBe(2);
   });
+
+  it('tick --at aplica um instante explícito e o journal ganha a entrada', async () => {
+    await ebb('deploy', 'pedido.bpmn');
+    const started = await ebb('start', 'Pedido');
+    const id = started.stdout.match(/instância (\S+)/)?.[1];
+    if (!id) throw new Error(`sem id na saída: ${started.stdout}`);
+
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const ticked = await ebb('tick', id.slice(0, 8), '--at', future);
+    expect(ticked.code).toBe(0);
+
+    const journal = await ebb('journal', id.slice(0, 8));
+    expect(journal.stdout).toContain('tick');
+  });
+
+  it('sai com 2 quando --at é malformado', async () => {
+    await ebb('deploy', 'pedido.bpmn');
+    const started = await ebb('start', 'Pedido');
+    const id = started.stdout.match(/instância (\S+)/)?.[1];
+    if (!id) throw new Error(`sem id na saída: ${started.stdout}`);
+
+    const bad = await ebb('tick', id.slice(0, 8), '--at', 'não-é-uma-data');
+    expect(bad.code).toBe(2);
+  });
 });

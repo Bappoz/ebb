@@ -83,10 +83,17 @@ async function main(): Promise<number> {
       case 'start': {
         const key = argv[1];
         if (!key || key.startsWith('--')) return usageError('Informe a chave do processo.');
-        const version = option(argv, 'version');
+        const versionArg = option(argv, 'version');
+        let version: number | undefined;
+        if (versionArg !== undefined) {
+          version = Number(versionArg);
+          if (!Number.isInteger(version)) {
+            return usageError(`--version esperava um inteiro e veio "${versionArg}".`);
+          }
+        }
         const result = await startInstance(runtime, key, {
           variables: parseVars(argv),
-          ...(version ? { version: Number(version) } : {}),
+          ...(version === undefined ? {} : { version }),
         });
         console.log(result.output);
         return result.exitCode;

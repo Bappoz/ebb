@@ -3,18 +3,7 @@ import { checksumOf, SqliteStore } from '@ebb/store';
 import { describe, expect, it } from 'vitest';
 import { EngineStateMismatchError, InstanceNotFoundError } from '../src/errors.js';
 import { EbbRuntime } from '../src/runtime.js';
-
-const PEDIDO = `<?xml version="1.0" encoding="UTF-8"?>
-<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
-  targetNamespace="http://ebb.test" id="Defs">
-  <bpmn:process id="Pedido" name="Processo de Pedido" isExecutable="true">
-    <bpmn:startEvent id="Start" />
-    <bpmn:userTask id="Separar" name="Separar itens" />
-    <bpmn:endEvent id="End" />
-    <bpmn:sequenceFlow id="f0" sourceRef="Start" targetRef="Separar" />
-    <bpmn:sequenceFlow id="f1" sourceRef="Separar" targetRef="End" />
-  </bpmn:process>
-</bpmn:definitions>`;
+import { PEDIDO } from './fixtures.js';
 
 const AT = 1_700_000_000_000;
 
@@ -134,6 +123,24 @@ describe('o relógio congelado', () => {
     expect(entries[1]).toMatchObject({ type: 'tick', at: AT + 60_000 });
     // O relógio de parede é outro campo e continua sendo o de verdade.
     expect(entries[1]?.recordedAt).toBe(new Date(AT).toISOString());
+    store.close();
+  });
+
+  it('carimba as entradas de histórico novas de um apply com o instante explícito', async () => {
+    const { store, runtime } = await fixture();
+    const started = await runtime.start('Pedido');
+    const [task] = started.tasks;
+    if (!task) throw new Error('nenhuma tarefa pendente');
+    const before = started.snapshot.history.length;
+
+    const at = AT + 60_000;
+    const done = await runtime.apply('inst-1', { type: 'completeTask', tokenId: task.tokenId }, at);
+
+    // Isola só o que o completeTask acrescentou, para não reconferir o que o
+    // start já tinha carimbado com AT.
+    const added = done.snapshot.history.slice(before);
+    expect(added.length).toBeGreaterThan(0);
+    for (const record of added) expect(record.at).toBe(at);
     store.close();
   });
 });
