@@ -20,6 +20,11 @@ este.
 
 ## Global Constraints
 
+- **Nos blocos de teste do `bpmn-flow` (tarefas 1–4), `describe`/`it` e
+  comentários vão em inglês**, como todo `packages/core/test/*.test.ts` já faz.
+  Onde o corpo de um teste deste plano aparecer em português, é defeito do
+  plano: traduza. No ebb, o português continua valendo.
+
 - **Node ≥ 24**, `node:sqlite`, nenhuma dependência nova sem justificar.
 - Shell não-interativo: antes de qualquer `npm`/`npx`, rodar
   `unset -f node npm npx 2>/dev/null; export PATH=/usr/bin:$PATH`.
@@ -298,8 +303,8 @@ async function process(xml: string): Promise<ProcessModel> {
   return (await parseBpmn(xml)).processes[0]!;
 }
 
-describe('espera por worker externo', () => {
-  it('para na atividade em vez de passar direto', async () => {
+describe('external job wait state', () => {
+  it('holds the activity instead of passing through', async () => {
     const eng = new WorkflowEngine(await process(EXTERNAL_JOB));
     const snap = await eng.start();
 
@@ -308,7 +313,7 @@ describe('espera por worker externo', () => {
     expect(task).toMatchObject({ nodeId: 'Charge', reason: 'job', job: { type: 'charge' } });
   });
 
-  it('segue o fluxo quando o worker conclui', async () => {
+  it('carries on once the worker completes it', async () => {
     const eng = new WorkflowEngine(await process(EXTERNAL_JOB));
     await eng.start();
     const [task] = eng.tasks({ reason: 'job' });
@@ -319,7 +324,7 @@ describe('espera por worker externo', () => {
     expect(snap.variables).toMatchObject({ authorized: true });
   });
 
-  it('deixa o handler local ganhar, quando há um', async () => {
+  it('lets a local handler win when there is one', async () => {
     const eng = new WorkflowEngine(await process(EXTERNAL_JOB));
     eng.registerHandler('Charge', () => ({ authorized: true }));
 
@@ -329,7 +334,7 @@ describe('espera por worker externo', () => {
     expect(eng.tasks({ reason: 'job' })).toHaveLength(0);
   });
 
-  it('sobrevive a um restore com o token parado no job', async () => {
+  it('survives a restore with the token parked on the job', async () => {
     const model = await parseBpmn(EXTERNAL_JOB);
     const eng = new WorkflowEngine(model.processes[0]!);
     await eng.start();
@@ -440,8 +445,8 @@ Acrescentar a `packages/core/test/jobs.test.ts`:
 ```ts
 import { BpmnError } from '../src/index.js';
 
-describe('worker que falha', () => {
-  it('vira incidente quando os retries acabam', async () => {
+describe('worker reporting a failure', () => {
+  it('opens an incident once the retries run out', async () => {
     const eng = new WorkflowEngine(await process(EXTERNAL_JOB), {
       onHandlerError: 'incident',
     });
@@ -457,7 +462,7 @@ describe('worker que falha', () => {
     expect(eng.tasks({ reason: 'job' })).toHaveLength(0);
   });
 
-  it('devolve o job ao worker enquanto houver tentativa', async () => {
+  it('hands the job back while an attempt remains', async () => {
     const eng = new WorkflowEngine(await process(EXTERNAL_JOB), {
       onHandlerError: 'incident',
       retry: { attempts: 1 },
@@ -467,19 +472,19 @@ describe('worker que falha', () => {
 
     await eng.failJob(first!.tokenId, new Error('gateway timeout'));
 
-    // Ainda há tentativa: a atividade volta a esperar worker, não vira incidente.
+    // An attempt remains: the activity waits on a worker again, no incident yet.
     expect(eng.tasks({ reason: 'job' })).toHaveLength(1);
     expect(eng.incidentList()).toHaveLength(0);
   });
 
-  it('recusa um token que não está esperando worker', async () => {
+  it('refuses a token that is not waiting on a worker', async () => {
     const eng = new WorkflowEngine(await process(EXTERNAL_JOB));
     await eng.start();
 
     await expect(eng.failJob('nope', new Error('x'))).rejects.toThrow(/No job for token/);
   });
 
-  it('dispara o boundary de erro quando o worker manda um BpmnError', async () => {
+  it('fires the error boundary when the worker sends a BpmnError', async () => {
     const eng = new WorkflowEngine(await process(JOB_WITH_BOUNDARY));
     await eng.start();
     const [task] = eng.tasks({ reason: 'job' });
@@ -579,7 +584,7 @@ journal do ebb, como o chunk 1 já faz com `mode`/`maxSteps`/`expressions`.
 Primeiro o teste, em `packages/core/test/jobs.test.ts`:
 
 ```ts
-it('restaura mantendo a política de falha que o host passar', async () => {
+it('restores with the failure policy the host passes in', async () => {
   const model = await parseBpmn(EXTERNAL_JOB);
   const eng = new WorkflowEngine(model.processes[0]!, { onHandlerError: 'incident' });
   await eng.start();
@@ -590,7 +595,7 @@ it('restaura mantendo a política de falha que o host passar', async () => {
   const [task] = revived.tasks({ reason: 'job' });
   await revived.failJob(task!.tokenId, new Error('gateway timeout'));
 
-  // Sem o alargamento, o motor restaurado cairia em 'fail' e mataria a instância.
+  // Without the widening, the restored engine would fall back to 'fail' and kill the instance.
   expect(revived.incidentList()).toMatchObject([{ message: 'gateway timeout' }]);
 });
 ```
