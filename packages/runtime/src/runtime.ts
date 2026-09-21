@@ -8,7 +8,14 @@ import {
 import type { EngineState, ExecutionSnapshot, PendingTask } from '@bpmn-flow/core';
 import type { InstanceRecord, JournalEntry, Store } from '@ebb/store';
 import { applyCommand, payloadOf, type InstanceCommand } from './commands.js';
-import { EngineStateMismatchError, InstanceNotFoundError } from './errors.js';
+import {
+  EngineStateMismatchError,
+  InstanceNotFoundError,
+  InstanceTerminatedError,
+} from './errors.js';
+
+/** Estados de onde não se sai: comando aqui só sujaria o journal. */
+const TERMINAL: ReadonlySet<string> = new Set(['completed', 'terminated', 'failed']);
 
 export interface EbbRuntimeOptions {
   store: Store;
@@ -65,9 +72,18 @@ export class EbbRuntime {
     const process = executableProcess(model);
     const at = this.now().getTime();
 
+    // onHandlerError e retry: a ruling do scan pré-voo fixa o padrão do ebb
+    // como 'incident' sem retry automático — diferente do padrão 'fail' de
+    // @bpmn-flow/core — porque uma falha de worker deve abrir incidente, não
+    // derrubar a instância. A tarefa 7 torna isto configurável por chamador;
+    // por ora o valor é fixo, mas já precisa ir para o motor e para o journal
+    // juntos, senão o journal descreveria uma política que o motor ao vivo
+    // não está de fato seguindo.
     const engine = new WorkflowEngine(process, {
       processes: model.processes,
       now: () => at,
+      onHandlerError: 'incident',
+      retry: { attempts: 0 },
       ...(options.variables ? { variables: options.variables } : {}),
     });
     // mode, maxSteps e expressions não são passados acima — o motor nasce no
@@ -76,7 +92,9 @@ export class EbbRuntime {
     // fonte da verdade que possa divergir dele (é o mesmo motivo pelo qual
     // ENGINE_STATE_VERSION foi de 9 para 10: expressions passou a fazer parte
     // do estado). Sem isso, um replay a partir só do journal teria de
-    // adivinhar com que opções a instância nasceu.
+    // adivinhar com que opções a instância nasceu. onHandlerError e retry não
+    // dá para ler de volta do motor — ele não os devolve em getState() —,
+    // então entram aqui com o mesmo valor resolvido acima.
     const engineState = engine.getState();
     const command: InstanceCommand = {
       type: 'start',
@@ -85,6 +103,8 @@ export class EbbRuntime {
         mode: engineState.mode,
         maxSteps: engineState.maxSteps,
         expressions: engineState.expressions,
+        onHandlerError: 'incident',
+        retry: { attempts: 0 },
       },
     };
     const snapshot = await applyCommand(engine, command);
@@ -115,6 +135,9 @@ export class EbbRuntime {
   async apply(instanceId: string, command: InstanceCommand, at?: number): Promise<CommandResult> {
     const when = at ?? this.now().getTime();
     const { instance, engine } = await this.hydrate(instanceId, when);
+    if (TERMINAL.has(instance.status)) {
+      throw new InstanceTerminatedError(instance.id, instance.status);
+    }
     const snapshot = await applyCommand(engine, command);
 
     const updated = await this.store.append({
