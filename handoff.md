@@ -1,163 +1,90 @@
-# Handoff — chunk 2: workers e jobs
+# Handoff — chunk 3: time-travel
 
-> Escrito ao final da sessão que entregou o chunk 1. Esta é a _única_ fonte de
-> contexto que a próxima sessão precisa — não releia a conversa anterior, ela
-> não existe mais para você. Se algo aqui contradizer o código do repo, o
-> código está certo e este documento está desatualizado; diga isso e corrija
-> ao final do chunk.
+> Escrito ao final da sessão que entregou o chunk 2. Esta é a _única_ fonte de
+> contexto que a próxima sessão precisa. Se algo aqui contradizer o código do
+> repo, o código está certo e este documento está desatualizado; diga isso e
+> corrija ao final do chunk.
 
-## O que é o ebb, em dois parágrafos
+## O que é o ebb
 
 Plataforma de orquestração BPMN 2.0 sobre o motor do `bpmn-flow`
-(`../bpmn-flow`, repositório irmão, consumido como dependência de caminho
-porque ainda não está no npm). Existe porque não há alternativa livre e nativa
-em TypeScript: Camunda 8 exige licença de produção, Camunda 7 Community morreu,
-o que resta de BPMN livre é JVM, e o que é Node não é motor de processo.
+(`../bpmn-flow`, dependência de caminho). O motor é determinístico dado
+`(estado, sequência de comandos)`; um **journal** de comandos reconstrói
+qualquer passo de qualquer instância. Desenho: `docs/superpowers/specs/`.
+Decisões fixas: SQLite via `node:sqlite`, Node ≥ 24, Apache-2.0, build **sem
+bundle**.
 
-O diferencial: o motor é determinístico dado `(estado, sequência de comandos)`.
-Um **journal** de `[comando, resultado dos handlers que ele disparou]`
-reconstrói qualquer passo de qualquer instância. Desenho completo com os 8
-chunks: [`docs/superpowers/specs/2026-09-14-ebb-design.md`](docs/superpowers/specs/2026-09-14-ebb-design.md).
+## O que existe (chunks 0–2)
 
-Decisões não renegociáveis: SQLite via `node:sqlite`, Node ≥ 24, Apache-2.0 sem
-edição paga, dev-first, build **sem bundle** (`bundle: false` em `tsup.base.ts`
-— o esbuild normaliza `node:sqlite` para `sqlite`, que não resolve, e só o
-binário construído mostra isso).
+`@ebb/store` (deployments, instâncias, journal, snapshot, tabela `jobs`),
+`@ebb/runtime` (`EbbRuntime`: start / apply / inspect / activateJobs /
+completeJob / failJob), `@ebb/cli` (definições, instâncias, `jobs`,
+`incidents`, `retry`, `resolve`, `worker`). `npm run verify` verde; **rode
+primeiro**.
 
-## O que já existe (chunks 0 e 1, entregues)
+### Regras que os chunks 1–2 fixaram
 
-```
-packages/store/src/
-  types.ts        Deployment, Instance*, Journal*, Store (a interface)
-  sqlite.ts       SqliteStore — node:sqlite; toda operação devolve Promise mesmo
-                  falhando (helper `promised`), para o contrato não mentir
-  migrations.ts   esquema versionado; SCHEMA_VERSION = 2
-  tx.ts           transaction(db, fn) — interno ao pacote, não é API pública
-  instances.ts    mapeadores linha→objeto das três tabelas de instância
-  rows.ts         leitura de coluna com tipo — nunca `as` numa linha do SQLite
-  checksum.ts     checksumOf(xml)
+1. **Relógio congelado por comando** — o `at` do journal é o que o replay reinjeta.
+2. **Versão do deployment congelada** na criação da instância.
+3. **Journal e snapshot na mesma transação**; o snapshot é cache.
+4. **Job é decisão do diagrama**, nunca de handler registrado nem de opção de
+   motor — senão o replay dependeria de quais workers estavam conectados.
+5. **`onHandlerError` e `retry` não fazem parte do `EngineState`.** Quem os
+   lembra é o payload do `start` no journal, e o `hydrate` os repassa ao
+   `restore` a cada comando. Defaults do ebb: `'incident'` e `{ attempts: 0 }`.
+6. **Reporte ≠ contabilidade.** `incidentList()` responde "o que segura um token
+   agora"; `getState().incidents` guarda o contador de tentativas de todos.
+   Misturar os dois faz o orçamento de retry reiniciar a cada comando.
+7. **A tabela `jobs` é índice derivado**, reconciliada na transação do append;
+   preserva a trava de um job que continua parado. `releaseJob` é fenced por
+   worker e best-effort; sem worker informado, cai no lease.
 
-packages/runtime/src/
-  commands.ts     InstanceCommand (união discriminada) + applyCommand + payloadOf
-  runtime.ts      EbbRuntime: start / apply / inspect — sem estado entre comandos
-  errors.ts       InstanceNotFoundError, EngineStateMismatchError
+## O chunk 3
 
-packages/cli/src/
-  commands.ts     deploy, list, versions      instances.ts  os 7 de instância
-  bin.ts          argv                        vars.ts       --var k=v
-  output.ts       CHECK/CROSS/WARN/table      paths.ts      resolveStorePath
-```
+> **Time-travel** — termina quando: rebobinar uma instância no navegador e
+> andar passo a passo no diagrama.
 
-`npm run verify` verde: 92 testes, cobertura 96.41/86.11/97.08/98.18 contra
-pisos de 90/85/90/90. **Rode primeiro**, antes de tocar em qualquer coisa.
-
-### As três regras que o chunk 1 fixou
-
-1. **O relógio é congelado por comando.** O motor lê `this.now()` uma vez por
-   entrada de histórico (`engine/engine.ts`, método `record`) e uma por timer
-   agendado; `history` faz parte de `EngineState`. Com relógio de parede, dois
-   replays do mesmo comando produzem estados diferentes. Medido: `start()` no
-   diagrama de teste gera 3 entradas com 3 instantes distintos. Todo motor
-   construído ou restaurado recebe `now: () => at`, e `at` é o que o journal
-   grava.
-2. **A versão do deployment é congelada na criação da instância.** `hydrate`
-   carrega `store.read(instance.processKey, instance.version)`, nunca a mais
-   recente: um redeploy não troca o modelo debaixo de quem está rodando.
-3. **Journal e snapshot na mesma transação.** `createInstance` e `append`
-   escrevem entrada do journal + snapshot + linha da instância ou nada. O
-   snapshot é cache (uma linha sobrescrita por instância); o journal é a verdade.
-
-### O que o journal guarda, e por quê
-
-```
-instance_journal(instance_id, seq, type, payload, at, recorded_at)
-```
-
-`at` é o relógio do **motor** (o que o replay reinjeta); `recorded_at` é o de
-parede (auditoria). Divergem num `tick --at`.
-
-O payload do `start` guarda `variables` **e** `engine: { mode, maxSteps,
-expressions }`, lidos de volta de `engine.getState()` — valores resolvidos, não
-presumidos. Isso não é zelo: `ENGINE_STATE_VERSION` foi de 9 para 10 no meio do
-chunk 1 justamente porque `expressions` entrou no `EngineState`. Como o snapshot
-é uma linha sobrescrita, do seq 2 em diante o valor original não sobrevive em
-lugar nenhum que um replay do zero alcance. Sem isso, o próximo bump tornaria
-irreplayável, em silêncio, toda instância já criada.
-
-## O chunk 2, ao pé da letra
-
-> **Workers e jobs** — termina quando: um worker em outro processo executa a
-> service task, com retry e incidente.
-
-Hoje toda execução é síncrona: sem handler registrado, uma service task passa
-direto. O chunk 2 põe o trabalho fora do processo do CLI.
-
-### O que o journal vai precisar ganhar
-
-O desenho geral define journal como `[comando, resultado dos handlers que ele
-disparou]`. A metade dos handlers **não existe ainda** — de propósito, porque
-no chunk 1 não há handler nenhum e coluna vazia não guarda informação. Agora
-passa a haver.
-
-`ALTER TABLE instance_journal ADD COLUMN effects TEXT` numa migração 3 é barato
-e não perde nada do que já está gravado. O que **não** dá para adiar é o
-contrato: todo handler que lê relógio, sorteia ou chama serviço externo tem o
-resultado journalado, e o replay serve o gravado em vez de executar de novo. É
-isso que neutraliza o não-determinismo, como o Temporal faz com activity.
-
-### A API do motor que você vai usar
-
-```ts
-engine.registerHandler(selector, handler)   // por node id, kind, ou '*'
-engine.retryTask(tokenId)                   // roda de novo a partir do incidente
-engine.resolveIncident(tokenId, output?)
-engine.incidentList(): IncidentState[]
-new WorkflowEngine(p, { onHandlerError: 'fail' | 'incident', retry: { attempts, delay } })
-```
-
-`applyCommand` (`packages/runtime/src/commands.ts`) é a **única** porta por onde
-um comando toca o motor — ao vivo e, no chunk 3, no replay. `retryTask` e
-`resolveIncident` viram variantes novas de `InstanceCommand` ali; a união é
-exaustiva sem `default`, então o `tsc` recusa se você esquecer um caso.
-
-### Fora de escopo (é ordem, não preguiça)
-
-Replay a partir do journal (chunk 3) · Postgres (8) · `CollaborationEngine` (6)
-· scheduler de timer em background — o `tick` continua manual.
+Pede replay a partir do journal. O que o chunk 2 deixou pronto: todo comando é
+dado passando por `applyCommand`, incluindo `completeJob`/`failJob`, e o
+`failJob` grava `{ message, code? }` (um `Error` não sobrevive a `JSON.stringify`).
 
 ## Dívida conhecida, com endereço
 
-- **Resolução de prefixo de id mora no CLI.** `packages/cli/src/instances.ts`
-  (`withInstance`) fala direto com `store.findInstances`, passando por cima do
-  `@ebb/runtime`. Não é defeito hoje; vira duplicação quando o chunk 4 expuser
-  HTTP e a regra de ambiguidade ganhar um segundo consumidor. Mover para o
-  `EbbRuntime` quando isso acontecer.
-- **`apply` não tem guarda de status terminal.** Um `tick` numa instância
-  concluída acrescenta entrada no-op no journal para sempre. Determinístico,
-  não corrompe — mas o que uma instância terminada responde a um comando é
-  decisão que o chunk 2 ou 3 precisa tomar.
-- **`append` lê o próximo `seq` fora da transação.** Dentro de um processo é
-  seguro (`node:sqlite` é síncrono). Entre processos, a PK `(instance_id, seq)`
-  faz o perdedor falhar limpo com rollback. Concorrência otimista de verdade é
-  do chunk 8.
-- **Três ramos sem teste, todos triados e aceitos:** o não-`Error` de
-  `message()` (`cli/src/instances.ts` — a regra `prefer-promise-reject-errors`
-  impede escrever o dublê, e o repo não tem nenhum `eslint-disable`); o `throw`
-  do `hydrate` para versão que deixou de estar publicada (exigiria API de apagar
-  deployment); e o teste ponta a ponta de `--version` malformado.
-- **`@ebb/cli` importa `@bpmn-flow/core` direto** para `parseBpmn`/`validateBpmn`
-  no `deploy`. Precede o chunk 1. Se o runtime virar dono exclusivo do motor,
-  isto é o que sobra para mover.
+- **Segurança do lease sob contenção real não tem teste.** Um teste com dois
+  `SqliteStore` no mesmo processo é impossível (`node:sqlite` é síncrono). O
+  teste em `packages/cli/test/bin.test.ts` usa dois processos de verdade mas
+  nada força a sobreposição — é rede de regressão contra dupla conclusão, não
+  prova de contenção. Uma prova real exige ponto de sincronização controlado.
+- **`packages/*/test/` fica fora do `tsc --noEmit`** (cada tsconfig inclui só
+  `src/`). Tornar um campo obrigatório não aponta chamadores em teste — isso
+  mordeu quatro vezes neste chunk. Proposta: `tsconfig.test.json`.
+- **`@ebb/store` e `@ebb/runtime` são consumidos via `dist/`**: um `vitest run`
+  parcial sem `npm run build` falha de forma enganosa quando a superfície muda.
+- `JSON.parse(stored.json) as EngineState` em `runtime.ts` (`hydrate`) viola a
+  regra de "sem `as` em saída de parse" que o guarda novo respeita.
+- `SqliteStore.db` virou `protected` só para um teste ler o pragma; um
+  acessor dedicado seria mais estreito.
+- A correção do decode UTF-8 do `ebb worker` (`Buffer.concat` antes de
+  `toString`) não tem teste; dá para testar sem processo.
+- `reconcileJobs` atualiza `updated_at` em todo comando, mesmo sem mudança.
+- `activity.end` é emitido sem `activity.start` quando um worker devolve
+  `BpmnError` (o park de job não emite `start`).
+- `ebb incidents` re-hidrata cada instância (O(n)); a saída é projetar
+  incidente como se projeta job.
+- **Resolução de prefixo de id mora no CLI** (`withInstance`): já tem dois
+  consumidores; o terceiro (HTTP, chunk 4) é o gatilho para mover ao `EbbRuntime`.
+- A coluna `effects` do journal segue **não existindo**: não há handler local
+  com não-determinismo até o dublê do `@ebb/testing` (4) ou os conectores (7).
+- Sem timeout de processo filho no `ebb worker`: um filho que vaza o fd de
+  stdout para um neto mantém o worker parado (o lease devolve o job).
 
 ## Como trabalhar neste repo
 
-- **Skill de brainstorming antes de escrever código.** O chunk 2 é arquitetural
-  (subsistema novo, contrato de handler). Proponha abordagens antes.
-- TDD: cada unidade de comportamento ganha teste antes ou junto.
-- Um commit por unidade lógica, Conventional Commits, **em inglês**;
-  `npm run verify` verde em cada um.
-- Defeito em `@bpmn-flow/core` se corrige **lá**, com teste lá, e vai por PR —
-  foi assim com `restore()` perdendo o modo de expressão (PR #55, `3a01ddf`).
+- Brainstorming antes de código; TDD; um commit por unidade lógica,
+  Conventional Commits **em inglês**; `npm run verify` verde em cada commit.
+- Defeito em `@bpmn-flow/core` se corrige **lá**, com teste lá, por PR — foi
+  assim com `restore()` (PR #55) e com o estado de espera de job (PR #58).
 - Linha do SQLite não vira tipo por `as`: passa por `packages/store/src/rows.ts`.
-- O shell do Bash não carrega o `.zshrc` inteiro: antes de `npm`/`npx`, rode
-  `unset -f node npm npx 2>/dev/null; export PATH=/usr/bin:$PATH`.
+- Antes de `npm`/`npx` no Bash não-interativo: `unset -f node npm npx
+2>/dev/null; export PATH=/usr/bin:$PATH`. No zsh, `$VAR` com espaço não faz
+  split — use função.
