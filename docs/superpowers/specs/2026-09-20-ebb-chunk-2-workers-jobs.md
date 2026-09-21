@@ -45,10 +45,10 @@ O tipo de job vem do diagrama, nas duas convenções que ferramenta real emite.
 Ambas as formas foram verificadas contra o `bpmn-moddle` 10.2 instalado, sem
 extensão de moddle:
 
-| Convenção | Onde cai no moddle |
-| --------- | ------------------ |
+| Convenção                                                                 | Onde cai no moddle                                                                                                      |
+| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `<zeebe:taskDefinition type="ship" retries="3"/>` sob `extensionElements` | `extensionElements.values[]` com `$type: 'zeebe:taskDefinition'` e `type`/`retries` como propriedades diretas (strings) |
-| `camunda:type="external" camunda:topic="charge"` no próprio elemento | `el.$attrs['camunda:type']` / `el.$attrs['camunda:topic']` |
+| `camunda:type="external" camunda:topic="charge"` no próprio elemento      | `el.$attrs['camunda:type']` / `el.$attrs['camunda:topic']`                                                              |
 
 Vira um campo normalizado no modelo:
 
@@ -135,8 +135,8 @@ ninguém, e o vencimento é o que devolve o job.
 O handoff do chunk 1 previa `ALTER TABLE instance_journal ADD COLUMN effects
 TEXT` aqui. Não entra, e o motivo é o mesmo pelo qual ela não existe hoje: o
 chunk 2 não introduz **nenhum handler local** — o trabalho sai do processo
-justamente para não ser handler, e o resultado do worker chega como *payload de
-comando*, que o journal já guarda. A coluna nasceria vazia.
+justamente para não ser handler, e o resultado do worker chega como _payload de
+comando_, que o journal já guarda. A coluna nasceria vazia.
 
 `effects` entra quando houver handler in-process com não-determinismo de
 verdade: o dublê do `@ebb/testing` (chunk 4) ou os conectores (chunk 7). O
@@ -190,13 +190,13 @@ ler uma instância terminada é o caso normal.
 
 ## Superfície do CLI
 
-| Comando | O que faz |
-| ------- | --------- |
-| `ebb jobs [--type t] [--instance id]` | trabalho pendente, com estado e lease |
-| `ebb worker <type> -- <comando>` | trava job, roda o comando por job, conclui ou falha |
-| `ebb incidents` | atividades paradas por falha, com tentativas e mensagem |
-| `ebb retry <token>` | roda a atividade de novo a partir do incidente |
-| `ebb resolve <token> [--var k=v]` | desiste e segue como se tivesse dado certo |
+| Comando                               | O que faz                                               |
+| ------------------------------------- | ------------------------------------------------------- |
+| `ebb jobs [--type t] [--instance id]` | trabalho pendente, com estado e lease                   |
+| `ebb worker <type> -- <comando>`      | trava job, roda o comando por job, conclui ou falha     |
+| `ebb incidents`                       | atividades paradas por falha, com tentativas e mensagem |
+| `ebb retry <token>`                   | roda a atividade de novo a partir do incidente          |
+| `ebb resolve <token> [--var k=v]`     | desiste e segue como se tivesse dado certo              |
 
 `ebb worker` roda **um processo filho por job**: variáveis em JSON no stdin,
 stdout JSON vira o output do job, código de saída diferente de zero vira
