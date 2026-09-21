@@ -68,11 +68,25 @@ function promised<T>(fn: () => T): Promise<T> {
   }
 }
 
+/**
+ * Quanto uma conexão espera por uma trava de escrita antes de lançar
+ * `SQLITE_BUSY`, em ms.
+ *
+ * O motor e um `ebb worker` escrevem no mesmo arquivo; quem perde a corrida de
+ * `BEGIN IMMEDIATE` (em `lockJobs`) tem de esperar a vez, não lançar na hora —
+ * senão a exclusão mútua que `tx.ts` promete não existe de verdade. Travar e
+ * devolver é questão de milissegundos, então 5s absorve contenção real sem
+ * deixar uma chamada de CLI parecer travada.
+ */
+const DEFAULT_BUSY_TIMEOUT_MS = 5_000;
+
 export interface SqliteStoreOptions {
   /** Caminho do arquivo, ou `:memory:`. O diretório é criado se faltar. */
   path: string;
   /** Relógio, para que o teste não dependa do de verdade. */
   now?: () => Date;
+  /** Sobrescreve {@link DEFAULT_BUSY_TIMEOUT_MS}, para um teste de contenção. */
+  busyTimeoutMs?: number;
 }
 
 /**
@@ -89,7 +103,9 @@ export class SqliteStore implements Store {
   constructor(options: SqliteStoreOptions) {
     this.now = options.now ?? (() => new Date());
     if (options.path !== ':memory:') mkdirSync(dirname(options.path), { recursive: true });
-    this.db = new DatabaseSync(options.path);
+    this.db = new DatabaseSync(options.path, {
+      timeout: options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS,
+    });
     // WAL deixa leitura e escrita conviverem; foreign_keys para o journal que vem.
     if (options.path !== ':memory:') this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');
@@ -223,8 +239,15 @@ export class SqliteStore implements Store {
   }
 
   lockJobs(input: LockJobsInput): Promise<JobRecord[]> {
-    return promised(() =>
-      transaction(
+    return promised(() => {
+      // `until` no passado travaria um job que qualquer outro `lockJobs`
+      // reconhece como vencido na mesma leitura — entrega dupla instantânea.
+      if (input.until <= input.now) {
+        throw new Error(
+          `lockJobs: "until" (${input.until}) tem de ser depois de "now" (${input.now}).`,
+        );
+      }
+      return transaction(
         this.db,
         () => {
           const candidates = this.db
@@ -251,8 +274,8 @@ export class SqliteStore implements Store {
           });
         },
         true,
-      ),
-    );
+      );
+    });
   }
 
   readInstance(id: string): Promise<InstanceRecord | undefined> {
@@ -361,6 +384,7 @@ export class SqliteStore implements Store {
                          attempts, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
        ON CONFLICT (instance_id, token_id) DO UPDATE SET
+         node_id = excluded.node_id, type = excluded.type,
          variables = excluded.variables, attempts = excluded.attempts, updated_at = excluded.updated_at`,
     );
     for (const job of jobs) {

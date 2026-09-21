@@ -97,6 +97,9 @@ export class EbbRuntime {
       command: { type: command.type, payload: payloadOf(command), at },
       state: { engineVersion: ENGINE_STATE_VERSION, json: JSON.stringify(engine.getState()) },
       // A tarefa 7 projeta os jobs reais a partir das tarefas paradas do motor.
+      // Até lá, [] apaga toda linha de jobs desta instância a cada append — inofensivo
+      // enquanto o runtime é o único escritor, mas some com o trabalho pendente se algo
+      // mais gravar jobs entre um append e o próximo.
       jobs: [],
     });
 
@@ -120,6 +123,9 @@ export class EbbRuntime {
       command: { type: command.type, payload: payloadOf(command), at: when },
       state: { engineVersion: ENGINE_STATE_VERSION, json: JSON.stringify(engine.getState()) },
       // A tarefa 7 projeta os jobs reais a partir das tarefas paradas do motor.
+      // Até lá, [] apaga toda linha de jobs desta instância a cada append — inofensivo
+      // enquanto o runtime é o único escritor, mas some com o trabalho pendente se algo
+      // mais gravar jobs entre um append e o próximo.
       jobs: [],
     });
 
