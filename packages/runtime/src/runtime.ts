@@ -5,14 +5,20 @@ import {
   parseBpmn,
   WorkflowEngine,
 } from '@bpmn-flow/core';
-import type { EngineState, ExecutionSnapshot, PendingTask } from '@bpmn-flow/core';
-import type { InstanceRecord, JournalEntry, Store } from '@ebb/store';
-import { applyCommand, payloadOf, type InstanceCommand } from './commands.js';
+import type { EngineState, ExecutionSnapshot, IncidentState, PendingTask } from '@bpmn-flow/core';
+import type { InstanceRecord, JobRecord, JournalEntry, Store } from '@ebb/store';
+import {
+  applyCommand,
+  payloadOf,
+  type InstanceCommand,
+  type StartEngineOptions,
+} from './commands.js';
 import {
   EngineStateMismatchError,
   InstanceNotFoundError,
   InstanceTerminatedError,
 } from './errors.js';
+import { projectJobs } from './jobs.js';
 
 /** Estados de onde não se sai: comando aqui só sujaria o journal. */
 const TERMINAL: ReadonlySet<string> = new Set(['completed', 'terminated', 'failed']);
@@ -29,12 +35,16 @@ export interface StartOptions {
   /** A versão a instanciar. A mais recente quando omitida. */
   version?: number;
   variables?: Record<string, unknown>;
+  /** Políticas de falha do motor. O padrão é `incident` sem retry automático. */
+  engine?: { onHandlerError?: 'fail' | 'incident'; retry?: { attempts: number } };
 }
 
 export interface CommandResult {
   instance: InstanceRecord;
   snapshot: ExecutionSnapshot;
   tasks: PendingTask[];
+  /** Atividades paradas por falha, com tentativas e mensagem. */
+  incidents: IncidentState[];
 }
 
 export interface InstanceView extends CommandResult {
@@ -75,15 +85,17 @@ export class EbbRuntime {
     // onHandlerError e retry: a ruling do scan pré-voo fixa o padrão do ebb
     // como 'incident' sem retry automático — diferente do padrão 'fail' de
     // @bpmn-flow/core — porque uma falha de worker deve abrir incidente, não
-    // derrubar a instância. A tarefa 7 torna isto configurável por chamador;
-    // por ora o valor é fixo, mas já precisa ir para o motor e para o journal
-    // juntos, senão o journal descreveria uma política que o motor ao vivo
-    // não está de fato seguindo.
+    // derrubar a instância. Resolvido uma única vez aqui e usado tanto para
+    // construir o motor ao vivo quanto para o payload do journal: os dois
+    // nunca podem divergir sobre que política a instância nasceu seguindo.
+    const engineOptions: Pick<StartEngineOptions, 'onHandlerError' | 'retry'> = {
+      onHandlerError: options.engine?.onHandlerError ?? 'incident',
+      retry: options.engine?.retry ?? { attempts: 0 },
+    };
     const engine = new WorkflowEngine(process, {
       processes: model.processes,
       now: () => at,
-      onHandlerError: 'incident',
-      retry: { attempts: 0 },
+      ...engineOptions,
       ...(options.variables ? { variables: options.variables } : {}),
     });
     // mode, maxSteps e expressions não são passados acima — o motor nasce no
@@ -103,8 +115,7 @@ export class EbbRuntime {
         mode: engineState.mode,
         maxSteps: engineState.maxSteps,
         expressions: engineState.expressions,
-        onHandlerError: 'incident',
-        retry: { attempts: 0 },
+        ...engineOptions,
       },
     };
     const snapshot = await applyCommand(engine, command);
@@ -116,14 +127,10 @@ export class EbbRuntime {
       status: snapshot.status,
       command: { type: command.type, payload: payloadOf(command), at },
       state: { engineVersion: ENGINE_STATE_VERSION, json: JSON.stringify(engine.getState()) },
-      // A tarefa 7 projeta os jobs reais a partir das tarefas paradas do motor.
-      // Até lá, [] apaga toda linha de jobs desta instância a cada append — inofensivo
-      // enquanto o runtime é o único escritor, mas some com o trabalho pendente se algo
-      // mais gravar jobs entre um append e o próximo.
-      jobs: [],
+      jobs: projectJobs(engine),
     });
 
-    return { instance, snapshot, tasks: engine.tasks() };
+    return { instance, snapshot, tasks: engine.tasks(), incidents: engine.incidentList() };
   }
 
   /**
@@ -145,14 +152,10 @@ export class EbbRuntime {
       status: snapshot.status,
       command: { type: command.type, payload: payloadOf(command), at: when },
       state: { engineVersion: ENGINE_STATE_VERSION, json: JSON.stringify(engine.getState()) },
-      // A tarefa 7 projeta os jobs reais a partir das tarefas paradas do motor.
-      // Até lá, [] apaga toda linha de jobs desta instância a cada append — inofensivo
-      // enquanto o runtime é o único escritor, mas some com o trabalho pendente se algo
-      // mais gravar jobs entre um append e o próximo.
-      jobs: [],
+      jobs: projectJobs(engine),
     });
 
-    return { instance: updated, snapshot, tasks: engine.tasks() };
+    return { instance: updated, snapshot, tasks: engine.tasks(), incidents: engine.incidentList() };
   }
 
   /** Lê uma instância sem aplicar nada. */
@@ -162,7 +165,55 @@ export class EbbRuntime {
     // journalado mantém a leitura determinística.
     const at = journal.at(-1)?.at ?? this.now().getTime();
     const { instance, engine } = await this.hydrate(instanceId, at);
-    return { instance, snapshot: engine.snapshot(), tasks: engine.tasks(), journal };
+    return {
+      instance,
+      snapshot: engine.snapshot(),
+      tasks: engine.tasks(),
+      incidents: engine.incidentList(),
+      journal,
+    };
+  }
+
+  /**
+   * Trava trabalho pendente para um worker e o devolve com as variáveis.
+   *
+   * Não aplica comando nenhum: travar não é evento de negócio. O que entra no
+   * journal é o desfecho — `completeJob` ou `failJob`. Um job travado e nunca
+   * concluído não deixa rastro na instância, que é o certo: para ela, nada
+   * aconteceu, e o lease devolve o job quando vencer.
+   */
+  activateJobs(options: {
+    type: string;
+    worker: string;
+    count?: number;
+    lease?: number;
+  }): Promise<JobRecord[]> {
+    const now = this.now().getTime();
+    return this.store.lockJobs({
+      type: options.type,
+      worker: options.worker,
+      count: options.count ?? 1,
+      until: now + (options.lease ?? 60_000),
+      now,
+    });
+  }
+
+  /** O worker terminou: conclui a atividade e segue o fluxo. */
+  completeJob(
+    instanceId: string,
+    tokenId: string,
+    output?: Record<string, unknown>,
+  ): Promise<CommandResult> {
+    return this.apply(instanceId, { type: 'completeJob', tokenId, ...(output ? { output } : {}) });
+  }
+
+  /** O worker não conseguiu: retry, incidente ou boundary de erro, conforme o motor. */
+  failJob(
+    instanceId: string,
+    tokenId: string,
+    error: { message: string; code?: string },
+  ): Promise<CommandResult> {
+    return this.apply(instanceId, { type: 'failJob', tokenId, error });
   }
 
   /** Reconstrói o motor de uma instância com o relógio congelado em `at`. */
@@ -191,10 +242,42 @@ export class EbbRuntime {
     const model = await parseBpmn(deployment.xml);
     const process = executableProcess(model);
     const state = JSON.parse(stored.json) as EngineState;
+
+    // As políticas de falha não estão no EngineState (o motor não as
+    // serializa, nem as devolve em getState()), então quem as lembra é a
+    // primeira entrada do journal — a que start() gravou. Sem re-lê-las e
+    // repassá-las a restore(), toda instância re-hidratada voltaria ao padrão
+    // 'fail' de @bpmn-flow/core, e uma falha de worker derrubaria a instância
+    // em vez de abrir incidente.
+    const [birth] = await this.store.journal(instanceId);
+    const engineOptions = parseStartEngineOptions(birth?.payload.engine);
+
     const engine = WorkflowEngine.restore(process, state, {
       processes: model.processes,
       now: () => at,
+      onHandlerError: engineOptions?.onHandlerError ?? 'incident',
+      retry: engineOptions?.retry ?? { attempts: 0 },
     });
     return { instance, engine };
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Guarda para o campo `engine` do payload do comando `start`, lido de volta
+ * via `JSON.parse` — não vira tipo por `as` sem checar o formato. Quando não
+ * casa (journal de uma versão anterior a esta tarefa, ou dado corrompido),
+ * cai no padrão de `EbbRuntime` em vez de mentir sobre o tipo.
+ */
+function parseStartEngineOptions(
+  value: unknown,
+): Pick<StartEngineOptions, 'onHandlerError' | 'retry'> | undefined {
+  if (!isRecord(value)) return undefined;
+  const { onHandlerError, retry } = value;
+  if (onHandlerError !== 'fail' && onHandlerError !== 'incident') return undefined;
+  if (!isRecord(retry) || typeof retry.attempts !== 'number') return undefined;
+  return { onHandlerError, retry: { attempts: retry.attempts } };
 }

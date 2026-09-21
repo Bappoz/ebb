@@ -6,4 +6,5 @@ export {
   InstanceTerminatedError,
 } from './errors.js';
 export { EbbRuntime } from './runtime.js';
+export { projectJobs } from './jobs.js';
 export type { CommandResult, EbbRuntimeOptions, InstanceView, StartOptions } from './runtime.js';
