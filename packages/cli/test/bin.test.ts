@@ -195,6 +195,35 @@ const JOB = `<?xml version="1.0" encoding="UTF-8"?>
 
 const OK_SCRIPT = '#!/bin/sh\nread input\necho \'{"authorized":true}\'\n';
 
+describe('ebb worker (argumentos)', () => {
+  it('sai com 2 quando falta o -- com o comando', async () => {
+    const result = await ebb('worker', 'charge');
+    expect(result.code).toBe(2);
+  });
+
+  it('sai com 2 quando --lease não é um inteiro', async () => {
+    const result = await ebb('worker', 'charge', '--lease', 'abc', '--', 'true');
+    expect(result.code).toBe(2);
+  });
+
+  it('--store depois do -- é argumento do comando filho, não hijacka o banco do ebb', async () => {
+    // Se `--store` fosse lido do argv inteiro (antes da correção), o `ebb`
+    // tentaria abrir o banco num caminho que não existe e falharia antes de
+    // sequer chegar no worker — em vez de usar o padrão `.ebb/ebb.db`.
+    const result = await ebb(
+      'worker',
+      'charge',
+      '--once',
+      '--',
+      'true',
+      '--store',
+      '/não/existe/nem/vai/existir.db',
+    );
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('Nenhum job');
+  });
+});
+
 /**
  * A segurança de cross-process do lease não tem como ser provada com dois
  * `SqliteStore` no mesmo processo: `node:sqlite` é síncrono e cada chamada
@@ -230,6 +259,14 @@ describe('ebb worker (cross-process)', () => {
 
     expect(a.code).toBe(0);
     expect(b.code).toBe(0);
+
+    // Independente de ordem: exatamente um dos dois viu o job (✓) e o outro
+    // não viu nenhum — nunca os dois com ✓, nunca os dois vazios. Isto pina
+    // "só um worker reivindicou o job" no nível do worker, não só no journal.
+    const claimed = [a.stdout, b.stdout].filter((out) => out.includes('✓'));
+    const empty = [a.stdout, b.stdout].filter((out) => out.includes('Nenhum job pendente.'));
+    expect(claimed).toHaveLength(1);
+    expect(empty).toHaveLength(1);
 
     expect((await ebb('jobs')).stdout).toContain('Nenhum job');
 

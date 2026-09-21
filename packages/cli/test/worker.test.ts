@@ -3,7 +3,7 @@ import { EbbRuntime } from '@ebb/runtime';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runWorker } from '../src/worker.js';
 
 const EXTERNAL_JOB = `<?xml version="1.0" encoding="UTF-8"?>
@@ -79,6 +79,18 @@ describe('runWorker', () => {
     });
   });
 
+  it('stdout vazio (ou "{}") completa sem gravar output no journal', async () => {
+    const { runtime, store } = await deployed();
+    const started = await runtime.start('P');
+    const script = await writeScript('echo.sh', '#!/bin/sh\nread input\necho "{}"\n');
+
+    await runWorker(runtime, { type: 'charge', command: [script], once: true });
+
+    const journal = await store.journal(started.instance.id);
+    const completion = journal.find((entry) => entry.type === 'completeJob');
+    expect(completion?.payload).not.toHaveProperty('output');
+  });
+
   it('saída diferente de zero vira incidente', async () => {
     const { runtime, store } = await deployed();
     await runtime.start('P');
@@ -91,6 +103,42 @@ describe('runWorker', () => {
     const [instance] = await store.listInstances();
     const view = await runtime.inspect(instance!.id);
     expect(view.tasks).toMatchObject([{ reason: 'incident' }]);
+  });
+
+  it('saída diferente de zero com stdout ilegível ainda assim usa o stderr como mensagem', async () => {
+    // O stdout de um processo que falha pode ter qualquer coisa (banner,
+    // log de progresso) — não é o canal de diagnóstico dele. Erro de
+    // contrato ("respondeu algo que não é JSON") é coisa de saída ZERO.
+    const { runtime, store } = await deployed();
+    await runtime.start('P');
+    const script = await writeScript(
+      'noisy.sh',
+      '#!/bin/sh\nread input\necho "iniciando cobrança..."\necho "cartão recusado pelo emissor" >&2\nexit 1\n',
+    );
+
+    const result = await runWorker(runtime, { type: 'charge', command: [script], once: true });
+
+    expect(result.output).toContain('cartão recusado pelo emissor');
+    expect(result.output).not.toContain('não é JSON');
+    expect(await store.listJobs()).toHaveLength(0);
+    const [instance] = await store.listInstances();
+    const view = await runtime.inspect(instance!.id);
+    expect(view.incidents).toMatchObject([{ message: 'cartão recusado pelo emissor' }]);
+  });
+
+  it('não trava quando o payload no stdin excede o buffer do pipe e o filho não lê nada', async () => {
+    // BOOM sai sem consumir o stdin: um payload de alguns bytes passa batido,
+    // mas um de alguns megabytes enche o buffer do pipe e o `write` final
+    // estoura EPIPE — sem o listener de erro no stdin isso derrubava o
+    // processo inteiro com uma exceção não tratada.
+    const { runtime, store } = await deployed();
+    await runtime.start('P', { variables: { blob: 'x'.repeat(5_000_000) } });
+    const script = await writeScript('boom.sh', BOOM);
+
+    const result = await runWorker(runtime, { type: 'charge', command: [script], once: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(await store.listJobs()).toHaveLength(0);
   });
 
   it('uma rodada sem job não faz nada e sai', async () => {
@@ -149,13 +197,56 @@ describe('runWorker', () => {
 
   it('sem --once, faz laço até um SIGINT parar', async () => {
     const { runtime } = await deployed();
-    const script = await writeScript('ok.sh', OK);
+    // Sem instância nenhuma, nunca há job — o comando não roda, então não
+    // precisa existir de verdade.
+    const before = process.listenerCount('SIGINT');
 
-    const pending = runWorker(runtime, { type: 'charge', command: [script], interval: 5 });
+    const pending = runWorker(runtime, {
+      type: 'charge',
+      command: ['/não/existe'],
+      interval: 5,
+    });
     setTimeout(() => process.emit('SIGINT'), 20);
     const result = await pending;
 
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain('Nenhum job');
+    // O handler de SIGINT não pode sobreviver à chamada: cada run some com o
+    // próprio, senão a suíte inteira acumula um por teste e o Ctrl-C do
+    // terminal real para de funcionar depois do primeiro `ebb worker`.
+    expect(process.listenerCount('SIGINT')).toBe(before);
+  });
+
+  it('activateJobs falhando não escapa: vira uma linha de erro na rodada', async () => {
+    const { runtime } = await deployed();
+    vi.spyOn(runtime, 'activateJobs').mockRejectedValueOnce(new Error('SQLITE_BUSY'));
+    const script = await writeScript('ok.sh', OK);
+
+    const result = await runWorker(runtime, { type: 'charge', command: [script], once: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('SQLITE_BUSY');
+  });
+
+  it('completeJob falhando não escapa: a rodada segue e reporta o erro', async () => {
+    const { runtime } = await deployed();
+    await runtime.start('P');
+    vi.spyOn(runtime, 'completeJob').mockRejectedValueOnce(new Error('banco fechado'));
+    const script = await writeScript('ok.sh', OK);
+
+    const result = await runWorker(runtime, { type: 'charge', command: [script], once: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('banco fechado');
+  });
+
+  it('remove o listener de SIGINT mesmo sem laço (--once)', async () => {
+    const { runtime } = await deployed();
+    const before = process.listenerCount('SIGINT');
+    const script = await writeScript('ok.sh', OK);
+
+    await runWorker(runtime, { type: 'charge', command: [script], once: true });
+
+    expect(process.listenerCount('SIGINT')).toBe(before);
   });
 });

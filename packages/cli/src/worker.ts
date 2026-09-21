@@ -23,15 +23,43 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Tenta ler `{"error":{"code","message"}}` de um JSON já parseado; `undefined` quando não tem essa forma. */
+function businessError(parsed: unknown): { message?: string; code?: string } | undefined {
+  return isRecord(parsed) && isRecord(parsed.error) ? parsed.error : undefined;
+}
+
 /**
  * O que o processo filho disse, traduzido para desfecho de job.
  *
- * Saída zero com stdout ilegível é falha, não sucesso silencioso: um worker
- * que imprime lixo não sabe o que fez, e concluir a atividade aí é perder o
- * único momento em que dá para perceber.
+ * A ordem importa: saída != 0 é sempre falha técnica ou de negócio, nunca
+ * erro de contrato — mesmo quando o stdout não é JSON válido, porque nesse
+ * caso o stdout não é o canal de diagnóstico, o stderr é. Só uma saída ZERO
+ * com stdout ilegível é erro de contrato: um worker que diz "deu certo" mas
+ * não sabe dizer o quê não deu certo de verdade, e concluir a atividade aí é
+ * perder o único momento em que dá para perceber.
  */
 function readOutcome(code: number, stdout: string, stderr: string): Outcome {
   const text = stdout.trim();
+
+  if (code !== 0) {
+    let parsed: unknown;
+    try {
+      parsed = text === '' ? undefined : JSON.parse(text);
+    } catch {
+      parsed = undefined; // stdout não é JSON: pista descartada, stderr é a mensagem.
+    }
+    const business = businessError(parsed);
+    const businessCode = typeof business?.code === 'string' ? business.code : undefined;
+    const message =
+      (typeof business?.message === 'string' ? business.message : undefined) ??
+      (stderr.trim() || `o worker saiu com código ${code}`);
+    return { error: { message, ...(businessCode ? { code: businessCode } : {}) } };
+  }
+
   let parsed: unknown;
   try {
     parsed = text === '' ? {} : JSON.parse(text);
@@ -42,17 +70,11 @@ function readOutcome(code: number, stdout: string, stderr: string): Outcome {
       },
     };
   }
-  if (code === 0) {
-    if (!isRecord(parsed))
-      return { error: { message: 'o worker respondeu um JSON que não é objeto.' } };
-    return { output: parsed };
+  if (!isRecord(parsed)) {
+    return { error: { message: 'o worker respondeu um JSON que não é objeto.' } };
   }
-  const business = isRecord(parsed) && isRecord(parsed.error) ? parsed.error : undefined;
-  const businessCode = typeof business?.code === 'string' ? business.code : undefined;
-  const message =
-    (typeof business?.message === 'string' ? business.message : undefined) ??
-    (stderr.trim() || `o worker saiu com código ${code}`);
-  return { error: { message, ...(businessCode ? { code: businessCode } : {}) } };
+  // Stdout vazio (ou "{}") conclui sem variável nova — não registra um output vazio no journal.
+  return { output: Object.keys(parsed).length > 0 ? parsed : undefined };
 }
 
 /** Roda o comando para um job, com o job no stdin. */
@@ -60,12 +82,22 @@ function runOnce(command: string[], job: JobRecord): Promise<Outcome> {
   const [bin, ...args] = command;
   return new Promise((resolve) => {
     const child = spawn(bin!, args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
-    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
     child.on('error', (error) => resolve({ error: { message: error.message } }));
-    child.on('close', (code) => resolve(readOutcome(code ?? 0, stdout, stderr)));
+    child.on('close', (code) => {
+      const stdout = Buffer.concat(stdoutChunks).toString('utf8');
+      const stderr = Buffer.concat(stderrChunks).toString('utf8');
+      resolve(readOutcome(code ?? 0, stdout, stderr));
+    });
+    // Um filho que sai sem drenar o stdin (o `BOOM` do teste, ou qualquer
+    // processo que não lê a entrada) faz `end()` estourar EPIPE — o próprio
+    // `close` já é o sinal autoritativo do que aconteceu, então não há nada
+    // para aprender de um erro de escrita: só evita que ele suba como
+    // exceção não tratada e derrube o worker inteiro.
+    child.stdin.on('error', () => {});
     child.stdin.end(
       JSON.stringify({
         instanceId: job.instanceId,
@@ -97,28 +129,50 @@ export async function runWorker(
   const worker = `${options.type}-${randomUUID().slice(0, 8)}`;
   const lines: string[] = [];
   let stop = false;
-  process.once('SIGINT', () => (stop = true));
+  const onSigint = (): void => {
+    stop = true;
+  };
+  process.once('SIGINT', onSigint);
 
-  do {
-    const jobs = await runtime.activateJobs({
-      type: options.type,
-      worker,
-      ...(options.count === undefined ? {} : { count: options.count }),
-      ...(options.lease === undefined ? {} : { lease: options.lease }),
-    });
-    for (const job of jobs) {
-      const outcome = await runOnce(options.command, job);
-      if (outcome.error) {
-        await runtime.failJob(job.instanceId, job.tokenId, outcome.error, { worker });
-        lines.push(`${CROSS} ${job.tokenId} — ${outcome.error.message}`);
-      } else {
-        await runtime.completeJob(job.instanceId, job.tokenId, outcome.output);
-        lines.push(`${CHECK} ${job.tokenId} — ${job.nodeId}`);
+  try {
+    do {
+      // `activateJobs`/`completeJob`/`failJob` podem lançar (SQLITE_BUSY além
+      // do timeout, banco fechado, ...). Em `--once` isso já voltaria como
+      // rejeição da promessa de qualquer forma; em modo laço — a única razão
+      // do laço existir — uma falha transitória do store não pode derrubar o
+      // worker inteiro, só o que estava em andamento.
+      let jobs: JobRecord[] = [];
+      try {
+        jobs = await runtime.activateJobs({
+          type: options.type,
+          worker,
+          ...(options.count === undefined ? {} : { count: options.count }),
+          ...(options.lease === undefined ? {} : { lease: options.lease }),
+        });
+      } catch (error) {
+        lines.push(`${CROSS} ${errorMessage(error)}`);
       }
-    }
-    if (options.once) break;
-    if (jobs.length === 0) await sleep(options.interval ?? 1_000);
-  } while (!stop);
+
+      for (const job of jobs) {
+        try {
+          const outcome = await runOnce(options.command, job);
+          if (outcome.error) {
+            await runtime.failJob(job.instanceId, job.tokenId, outcome.error, { worker });
+            lines.push(`${CROSS} ${job.tokenId} — ${outcome.error.message}`);
+          } else {
+            await runtime.completeJob(job.instanceId, job.tokenId, outcome.output);
+            lines.push(`${CHECK} ${job.tokenId} — ${job.nodeId}`);
+          }
+        } catch (error) {
+          lines.push(`${CROSS} ${job.tokenId} — ${errorMessage(error)}`);
+        }
+      }
+      if (options.once) break;
+      if (jobs.length === 0) await sleep(options.interval ?? 1_000);
+    } while (!stop);
+  } finally {
+    process.removeListener('SIGINT', onSigint);
+  }
 
   return {
     output: lines.length > 0 ? lines.join('\n') : 'Nenhum job pendente.',

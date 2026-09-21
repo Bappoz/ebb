@@ -83,7 +83,12 @@ async function main(): Promise<number> {
     return command ? 0 : 2;
   }
 
-  const store = new SqliteStore({ path: resolveStorePath(option(argv, 'store')) });
+  // `worker` carrega o próprio comando depois de `--`, e um argumento do
+  // filho como `--store` não pode ser confundido com a opção do `ebb`: as
+  // opções globais só existem antes do separador.
+  const separatorIndex = argv.indexOf('--');
+  const globalArgv = separatorIndex >= 0 ? argv.slice(0, separatorIndex) : argv;
+  const store = new SqliteStore({ path: resolveStorePath(option(globalArgv, 'store')) });
   const runtime = new EbbRuntime({ store });
   try {
     switch (command) {
@@ -220,12 +225,11 @@ async function main(): Promise<number> {
       case 'worker': {
         const type = argv[1];
         if (!type || type.startsWith('--')) return usageError('Informe o tipo do job.');
-        const separator = argv.indexOf('--');
-        const command = separator >= 0 ? argv.slice(separator + 1) : [];
+        const command = separatorIndex >= 0 ? argv.slice(separatorIndex + 1) : [];
         if (command.length === 0) {
           return usageError('Informe o comando depois de --.');
         }
-        const flags = argv.slice(0, separator);
+        const flags = globalArgv;
         const lease = positiveInteger(flags, 'lease');
         if (lease === INVALID) return usageError(invalidOption('lease', option(flags, 'lease')));
         const interval = positiveInteger(flags, 'interval');
