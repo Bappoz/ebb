@@ -564,13 +564,65 @@ ainda há tentativa e não há `delay`, e o `drain()` seguinte o leva de volta a
 `handleActivity` — que, sem handler local e com `node.job`, o parqueia como job
 de novo. É esse laço que faz o segundo teste passar sem nenhum código a mais.
 
+- [ ] **Step 3b: `restore` tem de aceitar `onHandlerError` e `retry`**
+
+Achado do scan pré-voo, e sem ele o chunk 2 não fecha: `WorkflowEngine.restore`
+aceita só `mode | maxSteps | processes | now | expressions`
+(`packages/core/src/engine/engine.ts:508`), e nenhuma das duas está em
+`EngineState`. Logo **toda instância re-hidratada volta com `onHandlerError:
+'fail'` e zero retries** — um `failJob` mataria a execução em vez de abrir
+incidente, que é exatamente o critério de pronto do chunk.
+
+A correção é aditiva e **não toca `EngineState`**: quem lembra as opções é o
+journal do ebb, como o chunk 1 já faz com `mode`/`maxSteps`/`expressions`.
+
+Primeiro o teste, em `packages/core/test/jobs.test.ts`:
+
+```ts
+it('restaura mantendo a política de falha que o host passar', async () => {
+  const model = await parseBpmn(EXTERNAL_JOB);
+  const eng = new WorkflowEngine(model.processes[0]!, { onHandlerError: 'incident' });
+  await eng.start();
+
+  const revived = WorkflowEngine.restore(model.processes[0]!, eng.getState(), {
+    onHandlerError: 'incident',
+  });
+  const [task] = revived.tasks({ reason: 'job' });
+  await revived.failJob(task!.tokenId, new Error('gateway timeout'));
+
+  // Sem o alargamento, o motor restaurado cairia em 'fail' e mataria a instância.
+  expect(revived.incidentList()).toMatchObject([{ message: 'gateway timeout' }]);
+});
+```
+
+Depois, a assinatura:
+
+```ts
+    options: Pick<
+      EngineOptions,
+      'mode' | 'maxSteps' | 'processes' | 'now' | 'expressions' | 'onHandlerError' | 'retry'
+    > = {},
+```
+
+e, no `new WorkflowEngine(...)` de dentro do `restore`, junto dos outros campos
+condicionais:
+
+```ts
+      ...(options.onHandlerError ? { onHandlerError: options.onHandlerError } : {}),
+      ...(options.retry ? { retry: options.retry } : {}),
+```
+
+Atualizar a docstring do `restore`: hoje ela diz "Re-register handlers and
+listeners before resuming"; acrescentar que as políticas de falha também são do
+host, porque não fazem parte do estado serializado.
+
 - [ ] **Step 4: Rodar e ver passar**
 
 ```bash
 cd ../bpmn-flow && npx vitest run packages/core/test/jobs.test.ts
 ```
 
-Esperado: PASS, onze testes.
+Esperado: PASS, doze testes.
 
 - [ ] **Step 5: Rodar a suíte inteira**
 
@@ -944,8 +996,14 @@ dentro da transação que já existe, logo depois de `writeEngineState`. E:
     return promised(() => {
       const where: string[] = [];
       const args: string[] = [];
-      if (filter.type !== undefined) (where.push('type = ?'), args.push(filter.type));
-      if (filter.instanceId !== undefined) (where.push('instance_id = ?'), args.push(filter.instanceId));
+      if (filter.type !== undefined) {
+        where.push('type = ?');
+        args.push(filter.type);
+      }
+      if (filter.instanceId !== undefined) {
+        where.push('instance_id = ?');
+        args.push(filter.instanceId);
+      }
       const clause = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
       return this.db
         .prepare(`SELECT * FROM jobs${clause} ORDER BY created_at, token_id`)
@@ -1147,6 +1205,34 @@ quatro):
 
 Importar `BpmnError` de `@bpmn-flow/core` (valor, não tipo).
 
+- [ ] **Step 3b: as políticas de falha entram em `StartEngineOptions`**
+
+Pela ruling do scan pré-voo: `onHandlerError` e `retry` mudam a execução, não
+estão em `EngineState` e o motor não as devolve em `getState()`. Quem as lembra
+é o journal — mesmo papel que `mode`/`maxSteps`/`expressions` têm desde o chunk
+1, só que resolvidas pelo ebb em vez de lidas de volta do motor.
+
+Em `packages/runtime/src/commands.ts`:
+
+```ts
+export interface StartEngineOptions {
+  mode: EngineMode;
+  maxSteps: number;
+  expressions: ExpressionMode;
+  /**
+   * As duas opções que o motor não guarda no estado nem devolve em
+   * `getState()`. Sem elas no journal, uma instância re-hidratada volta com o
+   * padrão `'fail'` e perde o incidente — e um replay reconstruiria uma
+   * execução diferente da que aconteceu.
+   */
+  onHandlerError: 'fail' | 'incident';
+  retry: { attempts: number };
+}
+```
+
+Os valores resolvidos são os da ruling: `onHandlerError: 'incident'` e
+`retry: { attempts: 0 }`, salvo o que o chamador pedir.
+
 - [ ] **Step 4: `InstanceTerminatedError`**
 
 Em `packages/runtime/src/errors.ts`:
@@ -1328,15 +1414,40 @@ O helper `startOnJob` publica a fixture de job (copiar `EXTERNAL_JOB` para
 `packages/runtime/test/fixtures.ts`, que já existe com 12 linhas), abre store
 temporário e dá `runtime.start('P', { variables: { pedido: 42 } })`.
 
-Para `retry: { attempts: 1 }` funcionar, o motor precisa nascer com essa opção.
-Hoje `EbbRuntime.start` não passa opção nenhuma — **e não pode passar por
-argumento**, porque mudaria a execução sem estar no journal. Passe pela mesma
-porta do resto: ela entra em `StartEngineOptions` e no payload do `start`, junto
-de `mode`/`maxSteps`/`expressions`, lida de volta de `engine.getState()` quando
-o motor a expuser; se `getState()` não expuser `retry`/`onHandlerError`, **pare
-e reporte** — significa que essas duas opções não estão no `EngineState` e um
-replay não as reconstruiria, o que é um achado para o chunk 3 e um segundo PR no
-core, não algo para contornar aqui.
+`retry: { attempts: 1 }` chega por `StartOptions`, que ganha um campo (a ruling
+do scan pré-voo e o passo 3b da tarefa 6 já fixaram o formato):
+
+```ts
+export interface StartOptions {
+  version?: number;
+  variables?: Record<string, unknown>;
+  /** Políticas de falha do motor. O padrão é `incident` sem retry automático. */
+  engine?: { onHandlerError?: 'fail' | 'incident'; retry?: { attempts: number } };
+}
+```
+
+`start` resolve os padrões (`'incident'`, `{ attempts: 0 }`), constrói o motor
+com eles, **e os grava no payload do `start`**. E `hydrate` os lê de volta do
+journal e os re-passa ao `restore` — sem isso a instância volta com `'fail'` e
+o incidente some. Em `hydrate`, antes do `restore`:
+
+```ts
+// As políticas de falha não estão no EngineState (o motor não as
+// serializa), então quem as lembra é a primeira entrada do journal.
+const [birth] = await this.store.journal(instanceId);
+const engineOptions = birth?.payload.engine as StartEngineOptions | undefined;
+```
+
+e no `restore`:
+
+```ts
+      onHandlerError: engineOptions?.onHandlerError ?? 'incident',
+      retry: engineOptions?.retry ?? { attempts: 0 },
+```
+
+`birth.payload.engine` vem de `JSON.parse`, então não pode virar tipo por `as`
+sem validação: escrever um guard pequeno no mesmo arquivo (`isRecord` +
+checagem dos dois campos) e cair no padrão quando não casar, em vez do `as`.
 
 - [ ] **Step 2: Rodar e ver falhar**
 
@@ -1652,6 +1763,31 @@ o que o sexto teste espera.
 Quatro `case` no `switch`, no formato dos que já existem (validar argumento
 faltando com `usageError`), e as quatro linhas correspondentes em `USAGE`, na
 seção nova "Trabalho:".
+
+Mais o flag que a ruling do scan pré-voo criou, no `case 'start'` que já existe:
+`--retries N` (inteiro ≥ 0, validado como `--version` já é) vira
+`{ engine: { retry: { attempts: N } } }` em `StartCliOptions` e segue para
+`runtime.start`. Sem o flag, o padrão é zero — nenhum número inventado. Uma
+linha em `USAGE`:
+
+```
+  --retries N         tentativas automáticas antes de virar incidente (padrão: 0)
+```
+
+E um teste em `packages/cli/test/jobs.test.ts`:
+
+```ts
+it('start --retries journala a política pedida', async () => {
+  const { store, runtime } = await deployed();
+  const started = await startInstance(runtime, 'P', { engine: { retry: { attempts: 2 } } });
+
+  const [birth] = await store.journal(idFrom(started.output));
+  expect(birth!.payload.engine).toMatchObject({
+    retry: { attempts: 2 },
+    onHandlerError: 'incident',
+  });
+});
+```
 
 - [ ] **Step 5: Rodar e ver passar**
 
