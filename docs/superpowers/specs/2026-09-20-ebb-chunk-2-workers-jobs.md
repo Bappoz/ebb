@@ -98,7 +98,7 @@ CREATE TABLE jobs (
   node_id       TEXT    NOT NULL,
   type          TEXT    NOT NULL,   -- o que o worker pede por nome
   variables     TEXT    NOT NULL,   -- JSON do escopo visível à atividade
-  state         TEXT    NOT NULL,   -- 'pending' | 'locked' | 'done'
+  state         TEXT    NOT NULL,   -- 'pending' | 'locked'; concluído some da tabela
   worker        TEXT,               -- quem segura, quando locked
   locked_until  INTEGER,            -- epoch ms; lease, não heartbeat
   attempts      INTEGER NOT NULL,   -- projeção de incidentList(); só para exibir
