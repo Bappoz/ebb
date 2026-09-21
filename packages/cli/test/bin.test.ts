@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -172,5 +172,72 @@ describe('ebb (binário construído)', () => {
 
     const bad = await ebb('tick', id.slice(0, 8), '--at', 'não-é-uma-data');
     expect(bad.code).toBe(2);
+  });
+});
+
+// Job externo, processado por um worker que é o próprio binário construído.
+const JOB = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  targetNamespace="http://ebb.test" id="Defs">
+  <bpmn:process id="Job" isExecutable="true">
+    <bpmn:startEvent id="Start" />
+    <bpmn:serviceTask id="Charge" name="Charge card">
+      <bpmn:extensionElements>
+        <zeebe:taskDefinition type="charge" />
+      </bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End" />
+    <bpmn:sequenceFlow id="f1" sourceRef="Start" targetRef="Charge" />
+    <bpmn:sequenceFlow id="f2" sourceRef="Charge" targetRef="End" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+const OK_SCRIPT = '#!/bin/sh\nread input\necho \'{"authorized":true}\'\n';
+
+/**
+ * A segurança de cross-process do lease não tem como ser provada com dois
+ * `SqliteStore` no mesmo processo: `node:sqlite` é síncrono e cada chamada
+ * resolve antes da próxima começar, então nunca haveria disputa de verdade —
+ * só ordem de execução. Aqui são dois processos do SO de verdade, apontando
+ * pro mesmo arquivo `.ebb/ebb.db`, disparados sem esperar um pelo outro para
+ * maximizar a chance de os dois baterem no `lockJobs` ao mesmo tempo.
+ *
+ * A asserção não depende de qual processo venceu a corrida — só de que o
+ * resultado é seguro: o job não pode ser completado duas vezes. Forçar uma
+ * sobreposição exata de instante entre dois processos do SO não é algo que dê
+ * para garantir de fora sem inventar um ponto de sincronização artificial
+ * (que mudaria o que está sendo testado); o que fica garantido de verdade,
+ * sempre, é a invariante — e é ela que a asserção cobra.
+ */
+describe('ebb worker (cross-process)', () => {
+  it('dois workers no mesmo banco nunca completam o mesmo job duas vezes', async () => {
+    await writeFile(join(dir, 'job.bpmn'), JOB, 'utf8');
+    const script = join(dir, 'ok.sh');
+    await writeFile(script, OK_SCRIPT, 'utf8');
+    await chmod(script, 0o755);
+
+    await ebb('deploy', 'job.bpmn');
+    const started = await ebb('start', 'Job');
+    const id = started.stdout.match(/instância (\S+)/)?.[1];
+    if (!id) throw new Error(`sem id na saída: ${started.stdout}`);
+
+    // Sem `await` entre os dois: os processos nascem em paralelo de verdade.
+    const [a, b] = await Promise.all([
+      ebb('worker', 'charge', '--once', '--', script),
+      ebb('worker', 'charge', '--once', '--', script),
+    ]);
+
+    expect(a.code).toBe(0);
+    expect(b.code).toBe(0);
+
+    expect((await ebb('jobs')).stdout).toContain('Nenhum job');
+
+    const shown = await ebb('show', id.slice(0, 8));
+    expect(shown.stdout).toContain('completed');
+
+    const journal = await ebb('journal', id.slice(0, 8));
+    const completions = journal.stdout.split('\n').filter((line) => line.includes('completeJob'));
+    expect(completions).toHaveLength(1);
   });
 });
