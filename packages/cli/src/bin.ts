@@ -12,6 +12,7 @@ import {
   startInstance,
   tickInstance,
 } from './instances.js';
+import { listIncidents, listJobs, resolveIncident, retryTask } from './jobs.js';
 import { resolveStorePath } from './paths.js';
 import { parseVars } from './vars.js';
 
@@ -31,6 +32,12 @@ Instâncias:
   ebb tick <id> [--at <iso>]            dispara os timers vencidos
   ebb journal <id>                      os comandos aplicados, em ordem
 
+Trabalho:
+  ebb jobs                              o trabalho esperando worker
+  ebb incidents                         o que parou por falha
+  ebb retry <id> <token>                roda a atividade de novo a partir do incidente
+  ebb resolve <id> <token>              desiste e segue como se tivesse dado certo
+
 O <id> aceita qualquer prefixo único, como o git.
 
 Opções:
@@ -38,6 +45,7 @@ Opções:
   --force             publica mesmo com aviso de validação
   --var chave=valor   variável de processo; JSON quando parseia, texto quando não
   --at <iso>          instante que o tick usa, em vez do relógio de parede
+  --retries N         tentativas automáticas antes de virar incidente (padrão: 0)
 `;
 
 /** Valor de uma opção `--nome valor`. */
@@ -91,9 +99,18 @@ async function main(): Promise<number> {
             return usageError(`--version esperava um inteiro e veio "${versionArg}".`);
           }
         }
+        const retriesArg = option(argv, 'retries');
+        let attempts: number | undefined;
+        if (retriesArg !== undefined) {
+          attempts = Number(retriesArg);
+          if (!Number.isInteger(attempts) || attempts < 0) {
+            return usageError(`--retries esperava um inteiro >= 0 e veio "${retriesArg}".`);
+          }
+        }
         const result = await startInstance(runtime, key, {
           variables: parseVars(argv),
           ...(version === undefined ? {} : { version }),
+          ...(attempts === undefined ? {} : { engine: { retry: { attempts } } }),
         });
         console.log(result.output);
         return result.exitCode;
@@ -146,6 +163,36 @@ async function main(): Promise<number> {
         const id = argv[1];
         if (!id || id.startsWith('--')) return usageError('Informe o id da instância.');
         const result = await showJournal(store, id);
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'jobs': {
+        const result = await listJobs(store, {});
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'incidents': {
+        const result = await listIncidents(store, runtime);
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'retry': {
+        const id = argv[1];
+        const token = argv[2];
+        if (!id || id.startsWith('--') || !token || token.startsWith('--')) {
+          return usageError('Informe o id da instância e o token da tarefa.');
+        }
+        const result = await retryTask(store, runtime, id, token);
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'resolve': {
+        const id = argv[1];
+        const token = argv[2];
+        if (!id || id.startsWith('--') || !token || token.startsWith('--')) {
+          return usageError('Informe o id da instância e o token da tarefa.');
+        }
+        const result = await resolveIncident(store, runtime, id, token, parseVars(argv));
         console.log(result.output);
         return result.exitCode;
       }
