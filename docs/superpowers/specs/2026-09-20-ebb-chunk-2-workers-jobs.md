@@ -101,7 +101,7 @@ CREATE TABLE jobs (
   state         TEXT    NOT NULL,   -- 'pending' | 'locked' | 'done'
   worker        TEXT,               -- quem segura, quando locked
   locked_until  INTEGER,            -- epoch ms; lease, não heartbeat
-  attempts      INTEGER NOT NULL,   -- tentativas já consumidas
+  attempts      INTEGER NOT NULL,   -- projeção de incidentList(); só para exibir
   created_at    TEXT    NOT NULL,
   updated_at    TEXT    NOT NULL,
   PRIMARY KEY (instance_id, token_id),
@@ -115,6 +115,16 @@ runtime reconcilia a tabela com `engine.tasks({ reason: 'job' })` — job que
 sumiu do motor sai, job novo entra, job que continua parado fica como está
 (inclusive a trava). Reconstruí-la do zero é sempre possível a partir do
 journal, e é o que o chunk 3 fará de graça.
+
+`attempts` é projeção de `engine.incidentList()`, para o `ebb jobs` dizer algo
+útil — a contagem autoritativa é a do motor, que é quem compara com
+`retry.attempts`. Duplicá-la aqui como contador próprio criaria duas verdades.
+
+Um job que falha deixa de ser job: o token passa a esperar por `'incident'`,
+some de `tasks({ reason: 'job' })` e a reconciliação apaga a linha. `ebb retry`
+roda a atividade de novo, ela volta a parar sem handler, e a linha reaparece —
+com `attempts` já diferente de zero. É por isso que a reconciliação não pode
+ser um `INSERT OR IGNORE`: ela é uma diferença nos dois sentidos.
 
 `locked_until` é lease porque é o único mecanismo que sobrevive à morte do
 worker sem processo residente do outro lado: um `ebb worker` morto não avisa
