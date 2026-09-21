@@ -76,7 +76,7 @@ são responsabilidades distintas e porque `instances.ts` já tem 228 linhas.
 
 ---
 
-## Tarefa 1: o parser lê o tipo de job
+## Task 1 — o parser lê o tipo de job
 
 **Files:**
 
@@ -271,7 +271,7 @@ Claude-Session: https://claude.ai/code/session_01DNVsCEFXN3mXPvFCDwbpjb"
 
 ---
 
-## Tarefa 2: a atividade para no job
+## Task 2 — a atividade para no job
 
 **Files:**
 
@@ -415,7 +415,7 @@ Claude-Session: https://claude.ai/code/session_01DNVsCEFXN3mXPvFCDwbpjb"
 
 ---
 
-## Tarefa 3: `failJob` — retry e incidente
+## Task 3 — `failJob` — retry e incidente
 
 **Files:**
 
@@ -646,7 +646,7 @@ Claude-Session: https://claude.ai/code/session_01DNVsCEFXN3mXPvFCDwbpjb"
 
 ---
 
-## Tarefa 4: documentar e abrir o PR do `bpmn-flow`
+## Task 4 — documentar e abrir o PR do `bpmn-flow`
 
 **Files:**
 
@@ -700,7 +700,7 @@ esperar.
 
 ---
 
-## Tarefa 5: a tabela `jobs` e a reconciliação no store
+## Task 5 — a tabela `jobs` e a reconciliação no store
 
 **Files:**
 
@@ -1079,7 +1079,7 @@ Claude-Session: https://claude.ai/code/session_01DNVsCEFXN3mXPvFCDwbpjb"
 
 ---
 
-## Tarefa 6: os comandos novos e a guarda de status terminal
+## Task 6 — os comandos novos e a guarda de status terminal
 
 **Files:**
 
@@ -1300,7 +1300,7 @@ Claude-Session: https://claude.ai/code/session_01DNVsCEFXN3mXPvFCDwbpjb"
 
 ---
 
-## Tarefa 7: o runtime projeta, ativa e conclui job
+## Task 7 — o runtime projeta, ativa e conclui job
 
 **Files:**
 
@@ -1564,7 +1564,7 @@ Claude-Session: https://claude.ai/code/session_01DNVsCEFXN3mXPvFCDwbpjb"
 
 ---
 
-## Tarefa 8: `ebb jobs`, `ebb incidents`, `ebb retry`, `ebb resolve`
+## Task 8 — `ebb jobs`, `ebb incidents`, `ebb retry`, `ebb resolve`
 
 **Files:**
 
@@ -1809,7 +1809,7 @@ Claude-Session: https://claude.ai/code/session_01DNVsCEFXN3mXPvFCDwbpjb"
 
 ---
 
-## Tarefa 9: `ebb worker` — o processo de fora
+## Task 9 — `ebb worker` — o processo de fora
 
 **Files:**
 
@@ -2083,7 +2083,7 @@ Claude-Session: https://claude.ai/code/session_01DNVsCEFXN3mXPvFCDwbpjb"
 
 ---
 
-## Tarefa 10: fechar o chunk — prova ponta a ponta, README e handoff
+## Task 10 — fechar o chunk — prova ponta a ponta, README e handoff
 
 **Files:**
 
