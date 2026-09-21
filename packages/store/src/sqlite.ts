@@ -284,14 +284,14 @@ export class SqliteStore implements Store {
     });
   }
 
-  releaseJob(instanceId: string, tokenId: string): Promise<void> {
+  releaseJob(instanceId: string, tokenId: string, worker: string): Promise<void> {
     return promised(() => {
       this.db
         .prepare(
           `UPDATE jobs SET state = 'pending', worker = NULL, locked_until = NULL, updated_at = ?
-           WHERE instance_id = ? AND token_id = ?`,
+           WHERE instance_id = ? AND token_id = ? AND worker = ?`,
         )
-        .run(this.now().toISOString(), instanceId, tokenId);
+        .run(this.now().toISOString(), instanceId, tokenId, worker);
     });
   }
 

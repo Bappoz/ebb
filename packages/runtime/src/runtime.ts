@@ -164,7 +164,7 @@ export class EbbRuntime {
     // Nada vai ler este relógio, mas restore() exige um: o último instante
     // journalado mantém a leitura determinística.
     const at = journal.at(-1)?.at ?? this.now().getTime();
-    const { instance, engine } = await this.hydrate(instanceId, at);
+    const { instance, engine } = await this.hydrate(instanceId, at, journal);
     return {
       instance,
       snapshot: engine.snapshot(),
@@ -207,31 +207,50 @@ export class EbbRuntime {
     return this.apply(instanceId, { type: 'completeJob', tokenId, ...(output ? { output } : {}) });
   }
 
-  /** O worker não conseguiu: retry, incidente ou boundary de erro, conforme o motor. */
+  /**
+   * O worker não conseguiu: retry, incidente ou boundary de erro, conforme o motor.
+   *
+   * `options.worker` é quem o chamador diz ser. Só quando informado a trava
+   * é liberada — cercada pelo próprio nome no `UPDATE` do store (fencing),
+   * então um `w1` atrasado que perdeu o lease para um `w2` não derruba a
+   * trava legítima de `w2` ao reportar tarde. Sem `worker`, a resposta é
+   * simplesmente confiar no lease: quem não sabe dizer quem é não provou que
+   * segura o job, e liberar no palpite dele reabriria o mesmo buraco. O
+   * worker da tarefa 9 sempre sabe o próprio nome e deve sempre passá-lo.
+   */
   async failJob(
     instanceId: string,
     tokenId: string,
     error: { message: string; code?: string },
+    options?: { worker?: string },
   ): Promise<CommandResult> {
     const result = await this.apply(instanceId, { type: 'failJob', tokenId, error });
-    // De propósito fora da transação do apply/append: a reconciliação de
-    // `jobs` preserva a trava de um `tokenId` que continua parado — certo
-    // para não roubar o job de um worker vivo, errado aqui, porque o worker
-    // que travou este token já reportou o resultado e nunca mais vai pedir
-    // por ele. Sem isto, um retry sem delay (`retry: { attempts: N }`, sem
-    // `delay`) vira um backoff de um lease inteiro (60s por padrão) em vez
-    // de "tenta de novo agora". O lease continua sendo o backstop: se o
-    // processo morrer entre o commit do apply e esta chamada, o job volta
-    // sozinho ao vencer a trava, exatamente como quando um worker morre
-    // segurando um job — isto só torna o caso comum imediato.
-    await this.store.releaseJob(instanceId, tokenId);
+    if (options?.worker) {
+      // De propósito fora da transação do apply/append, e de propósito
+      // melhor-esforço: o journal já commitou o desfecho real do comando, e
+      // nada aqui pode mudá-lo. Um release perdido (SQLITE_BUSY, banco
+      // fechado, o que for) custa no pior caso um período de lease — o
+      // backstop de sempre. Propagar o erro em vez disso faria `failJob`
+      // rejeitar apesar do commit, e um worker que razoavelmente tenta de
+      // novo aplicaria o comando uma SEGUNDA vez — consumindo mais uma
+      // tentativa do orçamento de retry, ou abrindo um incidente que não
+      // deveria existir. É exatamente o "orçamento de retry se comporta mal
+      // silenciosamente" que este chunk existe para evitar.
+      await this.store.releaseJob(instanceId, tokenId, options.worker).catch(() => {});
+    }
     return result;
   }
 
-  /** Reconstrói o motor de uma instância com o relógio congelado em `at`. */
+  /**
+   * Reconstrói o motor de uma instância com o relógio congelado em `at`.
+   *
+   * `journal`, quando o chamador já o tem em mãos (é o caso de `inspect`),
+   * evita reler do store só para pegar a primeira entrada de novo.
+   */
   private async hydrate(
     instanceId: string,
     at: number,
+    journal?: JournalEntry[],
   ): Promise<{ instance: InstanceRecord; engine: WorkflowEngine }> {
     const instance = await this.store.readInstance(instanceId);
     if (!instance) throw new InstanceNotFoundError(instanceId);
@@ -261,7 +280,7 @@ export class EbbRuntime {
     // repassá-las a restore(), toda instância re-hidratada voltaria ao padrão
     // 'fail' de @bpmn-flow/core, e uma falha de worker derrubaria a instância
     // em vez de abrir incidente.
-    const [birth] = await this.store.journal(instanceId);
+    const [birth] = journal ?? (await this.store.journal(instanceId));
     const engineOptions = parseStartEngineOptions(birth?.payload.engine);
 
     const engine = WorkflowEngine.restore(process, state, {

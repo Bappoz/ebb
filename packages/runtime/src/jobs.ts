@@ -23,14 +23,23 @@ export function projectJobs(engine: WorkflowEngine): JobProjection[] {
   const attempts = new Map(
     engine.getState().incidents.map((incident) => [incident.tokenId, incident.attempts]),
   );
-  return engine.tasks({ reason: 'job' }).map((task) => ({
-    tokenId: task.tokenId,
-    nodeId: task.nodeId,
+  return engine.tasks({ reason: 'job' }).map((task) => {
     // task.job é opcional no tipo do core, mas um token parado por 'job'
-    // sempre o tem. O `?? ''` existe só para o tsc; linha com tipo vazio em
-    // teste é bug de projeção, não dado válido.
-    type: task.job?.type ?? '',
-    variables: task.variables,
-    attempts: attempts.get(task.tokenId) ?? 0,
-  }));
+    // sempre o tem. Um `?? ''` aqui gravaria `type: ''` — trabalho que
+    // nenhum `lockJobs({ type })` jamais casa, perdido em silêncio. Se isto
+    // disparar, é bug de projeção do core ou daqui, e deve estourar, não
+    // virar uma linha invisível.
+    if (!task.job) {
+      throw new Error(
+        `Token ${task.tokenId} no nó ${task.nodeId} espera como 'job' mas não tem job.type.`,
+      );
+    }
+    return {
+      tokenId: task.tokenId,
+      nodeId: task.nodeId,
+      type: task.job.type,
+      variables: task.variables,
+      attempts: attempts.get(task.tokenId) ?? 0,
+    };
+  });
 }

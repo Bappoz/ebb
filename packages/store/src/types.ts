@@ -223,10 +223,14 @@ export interface Store {
 
   /**
    * Devolve um job travado à fila, sem tocar em mais nada da instância: só
-   * este `tokenId` volta a `state: 'pending'`, sem worker nem lease. Não-op
-   * quando a linha já sumiu (job concluído, ou instância seguiu adiante).
+   * este `tokenId` volta a `state: 'pending'`, sem worker nem lease.
+   *
+   * `worker` cerca a operação: só libera quando é quem hoje segura a trava.
+   * Sem isto, um `w1` que demorou, perdeu o lease para um `w2` e só depois
+   * reporta o resultado antigo derrubaria a trava legítima de `w2`. Não-op
+   * (não lança) quando a linha já sumiu ou está travada para outro worker.
    */
-  releaseJob(instanceId: string, tokenId: string): Promise<void>;
+  releaseJob(instanceId: string, tokenId: string, worker: string): Promise<void>;
 
   close(): void;
 }

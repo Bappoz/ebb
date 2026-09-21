@@ -191,6 +191,32 @@ describe('jobs', () => {
     expect(await store.listJobs({ instanceId: instance.id })).toHaveLength(2);
     expect(await store.listJobs({ instanceId: 'outra' })).toHaveLength(0);
   });
+
+  it('releaseJob devolve o job travado à fila', async () => {
+    await seeded({ jobs: [projection('t1')] });
+    await store.lockJobs({ type: 'charge', worker: 'w1', count: 1, until: 5_000, now: 1_000 });
+
+    await store.releaseJob('i1', 't1', 'w1');
+
+    const [job] = await store.listJobs();
+    expect(job).toMatchObject({ state: 'pending' });
+    expect(job?.worker).toBeUndefined();
+    expect(job?.lockedUntil).toBeUndefined();
+  });
+
+  it('releaseJob de um token sem linha resolve, não lança', async () => {
+    await seeded({ jobs: [] });
+    await expect(store.releaseJob('i1', 'sumiu', 'w1')).resolves.toBeUndefined();
+  });
+
+  it('releaseJob com o worker errado não mexe na trava de quem a segura', async () => {
+    await seeded({ jobs: [projection('t1')] });
+    await store.lockJobs({ type: 'charge', worker: 'w1', count: 1, until: 5_000, now: 1_000 });
+
+    await store.releaseJob('i1', 't1', 'w2');
+
+    expect(await store.listJobs()).toMatchObject([{ state: 'locked', worker: 'w1' }]);
+  });
 });
 
 // Caminho feliz dos testes acima só passa por `state` válido; o gate de
