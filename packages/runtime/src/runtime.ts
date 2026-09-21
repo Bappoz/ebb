@@ -208,12 +208,24 @@ export class EbbRuntime {
   }
 
   /** O worker não conseguiu: retry, incidente ou boundary de erro, conforme o motor. */
-  failJob(
+  async failJob(
     instanceId: string,
     tokenId: string,
     error: { message: string; code?: string },
   ): Promise<CommandResult> {
-    return this.apply(instanceId, { type: 'failJob', tokenId, error });
+    const result = await this.apply(instanceId, { type: 'failJob', tokenId, error });
+    // De propósito fora da transação do apply/append: a reconciliação de
+    // `jobs` preserva a trava de um `tokenId` que continua parado — certo
+    // para não roubar o job de um worker vivo, errado aqui, porque o worker
+    // que travou este token já reportou o resultado e nunca mais vai pedir
+    // por ele. Sem isto, um retry sem delay (`retry: { attempts: N }`, sem
+    // `delay`) vira um backoff de um lease inteiro (60s por padrão) em vez
+    // de "tenta de novo agora". O lease continua sendo o backstop: se o
+    // processo morrer entre o commit do apply e esta chamada, o job volta
+    // sozinho ao vencer a trava, exatamente como quando um worker morre
+    // segurando um job — isto só torna o caso comum imediato.
+    await this.store.releaseJob(instanceId, tokenId);
+    return result;
   }
 
   /** Reconstrói o motor de uma instância com o relógio congelado em `at`. */

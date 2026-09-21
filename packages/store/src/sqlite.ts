@@ -284,6 +284,17 @@ export class SqliteStore implements Store {
     });
   }
 
+  releaseJob(instanceId: string, tokenId: string): Promise<void> {
+    return promised(() => {
+      this.db
+        .prepare(
+          `UPDATE jobs SET state = 'pending', worker = NULL, locked_until = NULL, updated_at = ?
+           WHERE instance_id = ? AND token_id = ?`,
+        )
+        .run(this.now().toISOString(), instanceId, tokenId);
+    });
+  }
+
   readInstance(id: string): Promise<InstanceRecord | undefined> {
     return promised(() => {
       const row = this.db.prepare('SELECT * FROM instances WHERE id = ?').get(id);

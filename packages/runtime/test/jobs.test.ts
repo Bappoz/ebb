@@ -73,13 +73,18 @@ describe('jobs no runtime', () => {
     await runtime.failJob(job!.instanceId, job!.tokenId, { message: 'gateway timeout' });
 
     // O motor retenta na hora (mesmo token, sem esperar tick): o job segue
-    // parado como 'job', não vira incidente. `attempts` sobe para 1 — sem
+    // parado como 'job', não vira incidente, e `attempts` sobe para 1 — sem
     // isso o worker que pegar a próxima tentativa não saberia que já houve
-    // uma falha. O estado continua 'locked' porque a reconciliação do store
-    // preserva a trava de um job que continua parado (mesmo tokenId antes e
-    // depois); é o lease, não este retentativa em si, que devolve o job à
-    // fila — coberto no teste seguinte.
-    expect(await store.listJobs()).toMatchObject([{ state: 'locked', worker: 'w1', attempts: 1 }]);
+    // uma falha. `failJob` libera a trava do worker que acabou de reportar
+    // (ele já disse o que tinha a dizer sobre esta tentativa e não vai
+    // pedir por este job de novo); sem isso a reconciliação preservaria a
+    // trava do worker anterior — certo quando o job só continua parado sem
+    // ninguém ter falado nada, errado aqui — e um retry sem `delay`
+    // ("tenta de novo agora") viraria um backoff do lease inteiro (60s por
+    // padrão) antes de qualquer worker poder pegá-lo de volta.
+    const [reverted] = await store.listJobs();
+    expect(reverted).toMatchObject({ state: 'pending', attempts: 1 });
+    expect(reverted?.worker).toBeUndefined();
     store.close();
   });
 
@@ -103,27 +108,54 @@ describe('jobs no runtime', () => {
     store.close();
   });
 
+  it('a trava vencida devolve o job, mesmo sem ninguém reportar nada', async () => {
+    // O backstop para o worker que morre segurando o job, sem nunca chamar
+    // completeJob nem failJob: o lease, não um reporte, é quem devolve o
+    // job aqui. É o caso que `failJob`'s releaseJob explícito não cobre (o
+    // worker nunca fala de novo) e que continua precisando do vencimento.
+    const { runtime, store, advance } = await startOnJob();
+    const [job] = await runtime.activateJobs({ type: 'charge', worker: 'w1' });
+
+    advance(60_000);
+    const retaken = await runtime.activateJobs({ type: 'charge', worker: 'w2' });
+
+    expect(retaken).toMatchObject([{ tokenId: job!.tokenId, worker: 'w2' }]);
+    store.close();
+  });
+
+  it('falhar com retry devolve o job ao mesmo worker sem esperar o lease vencer', async () => {
+    // A propriedade de que o worker da tarefa 9 depende: um retry sem
+    // `delay` configurado é "tenta de novo agora", não "espera o lease
+    // inteiro" — nenhuma chamada a `advance` aqui.
+    const { runtime, store } = await startOnJob({ retry: { attempts: 1 } });
+    const [job] = await runtime.activateJobs({ type: 'charge', worker: 'w1' });
+
+    await runtime.failJob(job!.instanceId, job!.tokenId, { message: 'gateway timeout' });
+    const [retaken] = await runtime.activateJobs({ type: 'charge', worker: 'w1' });
+
+    expect(retaken).toMatchObject({ tokenId: job!.tokenId, worker: 'w1', attempts: 1 });
+    expect(await store.listJobs()).toMatchObject([{ state: 'locked' }]);
+    store.close();
+  });
+
   it('a política de retry sobrevive ao re-hidratar que cada apply faz', async () => {
     // O ponto inteiro do chunk: sem hydrate() repassar onHandlerError/retry a
     // restore(), a segunda falha voltaria ao padrão 'fail' de
     // @bpmn-flow/core, sem retry algum, e derrubaria a instância — cada
     // apply() descarta o motor e o reconstrói do zero, então isto só prova
     // alguma coisa se as duas falhas passarem por hydrate()s distintos.
-    const { runtime, store, advance } = await startOnJob({ retry: { attempts: 1 } });
+    const { runtime, store } = await startOnJob({ retry: { attempts: 1 } });
 
     const [first] = await runtime.activateJobs({ type: 'charge', worker: 'w1' });
     const afterFirstFailure = await runtime.failJob(first!.instanceId, first!.tokenId, {
       message: 'gateway timeout',
     });
     // Primeira falha: dentro do orçamento de 1 retry, então nenhum incidente
-    // — o motor retentou na hora e o job continua vivo, só travado ao worker
-    // que já tentou até o lease vencer.
+    // — o motor retentou na hora e o job já está disponível de novo (a
+    // trava foi liberada, sem precisar esperar o lease vencer).
     expect(afterFirstFailure.incidents).toHaveLength(0);
     expect(afterFirstFailure.snapshot.status).toBe('waiting');
 
-    // Avança além do lease de 60s para o job voltar a ser candidato — sem
-    // isto a segunda ativação não encontraria nada (trava ainda válida).
-    advance(60_000);
     const [second] = await runtime.activateJobs({ type: 'charge', worker: 'w2' });
     expect(second).toMatchObject({ tokenId: first!.tokenId, attempts: 1 });
 

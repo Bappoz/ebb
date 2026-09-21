@@ -221,5 +221,12 @@ export interface Store {
    */
   lockJobs(input: LockJobsInput): Promise<JobRecord[]>;
 
+  /**
+   * Devolve um job travado à fila, sem tocar em mais nada da instância: só
+   * este `tokenId` volta a `state: 'pending'`, sem worker nem lease. Não-op
+   * quando a linha já sumiu (job concluído, ou instância seguiu adiante).
+   */
+  releaseJob(instanceId: string, tokenId: string): Promise<void>;
+
   close(): void;
 }

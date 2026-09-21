@@ -10,6 +10,14 @@ import type { JobProjection } from '@ebb/store';
  * assim carrega a contagem de tentativas na contabilidade interna do motor.
  * Sem isto, um job retentado em linha (sem esperar tick nenhum) apareceria
  * sempre com `attempts: 0`, escondendo do worker que já houve uma falha.
+ *
+ * As duas fontes existem por motivos diferentes, não por acaso:
+ * `incidentList()` é a API de *relato* ("o que está parado agora, para eu
+ * mostrar num `ebb incidents`"), enquanto `getState().incidents` é a
+ * contabilidade completa, serializada de propósito para o orçamento de
+ * retry sobreviver a um rehydrate. Um job retentado em linha é exatamente o
+ * caso em que os dois conjuntos divergem — não "simplificar" de volta para
+ * `incidentList()`.
  */
 export function projectJobs(engine: WorkflowEngine): JobProjection[] {
   const attempts = new Map(
