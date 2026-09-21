@@ -167,6 +167,7 @@ describe('EbbRuntime.inspect', () => {
       status: 'waiting',
       command: { type: 'tick', payload: {}, at: AT },
       state: { engineVersion: ENGINE_STATE_VERSION - 1, json: '{}' },
+      jobs: [],
     });
 
     await expect(runtime.inspect('inst-1')).rejects.toThrow(EngineStateMismatchError);

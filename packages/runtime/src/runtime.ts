@@ -96,6 +96,8 @@ export class EbbRuntime {
       status: snapshot.status,
       command: { type: command.type, payload: payloadOf(command), at },
       state: { engineVersion: ENGINE_STATE_VERSION, json: JSON.stringify(engine.getState()) },
+      // A tarefa 7 projeta os jobs reais a partir das tarefas paradas do motor.
+      jobs: [],
     });
 
     return { instance, snapshot, tasks: engine.tasks() };
@@ -117,6 +119,8 @@ export class EbbRuntime {
       status: snapshot.status,
       command: { type: command.type, payload: payloadOf(command), at: when },
       state: { engineVersion: ENGINE_STATE_VERSION, json: JSON.stringify(engine.getState()) },
+      // A tarefa 7 projeta os jobs reais a partir das tarefas paradas do motor.
+      jobs: [],
     });
 
     return { instance: updated, snapshot, tasks: engine.tasks() };

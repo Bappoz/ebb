@@ -33,6 +33,7 @@ function creation(id = 'i1') {
     status: 'waiting' as const,
     command: { type: 'start', payload: { variables: { total: 42 } }, at: 1_700_000_000_000 },
     state: { engineVersion: 10, json: '{"version":10,"steps":1}' },
+    jobs: [],
   };
 }
 
@@ -60,6 +61,7 @@ describe('escrita de instância', () => {
       status: 'completed',
       command: { type: 'completeTask', payload: { tokenId: 't1' }, at: 1_700_000_001_000 },
       state: { engineVersion: 10, json: '{"version":10,"steps":2}' },
+      jobs: [],
     });
 
     expect(after).toMatchObject({ seq: 2, status: 'completed' });
@@ -98,6 +100,7 @@ describe('escrita de instância', () => {
         status: 'completed',
         command: { type: 'completeTask', payload: { tokenId: 't1' }, at: 1_700_000_001_000 },
         state: { engineVersion: 10, json: '{"version":10,"steps":2}' },
+        jobs: [],
       }),
     ).rejects.toThrow('disco cheio');
 
@@ -157,6 +160,7 @@ describe('leituras e escritas sem a instância', () => {
         status: 'completed',
         command: { type: 'completeTask', payload: {}, at: 1 },
         state: { engineVersion: 1, json: '{}' },
+        jobs: [],
       }),
     ).rejects.toThrow('Nenhuma instância');
     store.close();
@@ -209,6 +213,7 @@ describe('consulta de instância', () => {
       status: 'completed',
       command: { type: 'completeTask', payload: { tokenId: 't1' }, at: 1_700_000_001_000 },
       state: { engineVersion: 10, json: '{}' },
+      jobs: [],
     });
 
     const entries = await store.journal('i1');

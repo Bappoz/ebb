@@ -69,6 +69,33 @@ const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  // `jobs` é índice, não verdade: a linha é derivada dos tokens parados no
+  // motor e reconstruível a partir do journal. Existe para um worker varrer
+  // trabalho pendente de todas as instâncias sem re-hidratar motor nenhum.
+  // `locked_until` é lease e não heartbeat: um `ebb worker` morto não avisa
+  // ninguém, e o vencimento é o que devolve o job.
+  {
+    version: 3,
+    name: 'jobs',
+    up: `
+      CREATE TABLE jobs (
+        instance_id   TEXT    NOT NULL,
+        token_id      TEXT    NOT NULL,
+        node_id       TEXT    NOT NULL,
+        type          TEXT    NOT NULL,
+        variables     TEXT    NOT NULL,
+        state         TEXT    NOT NULL,
+        worker        TEXT,
+        locked_until  INTEGER,
+        attempts      INTEGER NOT NULL,
+        created_at    TEXT    NOT NULL,
+        updated_at    TEXT    NOT NULL,
+        PRIMARY KEY (instance_id, token_id),
+        FOREIGN KEY (instance_id) REFERENCES instances (id) ON DELETE CASCADE
+      );
+      CREATE INDEX jobs_pending ON jobs (type, state, locked_until);
+    `,
+  },
 ];
 
 /** A versão de esquema que este código espera. */

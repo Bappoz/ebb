@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { toInstance, toJournalEntry, toStoredState } from './instances.js';
+import { toJob } from './jobs.js';
 import { migrate } from './migrations.js';
 import { integer, optionalText, text, type Row } from './rows.js';
 import { transaction } from './tx.js';
@@ -14,7 +15,10 @@ import type {
   Deployment,
   EngineStateInput,
   InstanceRecord,
+  JobProjection,
+  JobRecord,
   JournalEntry,
+  LockJobsInput,
   ProcessSummary,
   Store,
   StoredEngineState,
@@ -177,6 +181,7 @@ export class SqliteStore implements Store {
           .run(input.id, input.processKey, input.version, input.status, at, at);
         this.writeJournal(input.id, 1, input.command);
         this.writeEngineState(input.id, 1, input.state);
+        this.reconcileJobs(input.id, input.jobs);
         return this.instanceRow(input.id);
       }),
     );
@@ -191,9 +196,63 @@ export class SqliteStore implements Store {
         this.db
           .prepare('UPDATE instances SET status = ?, seq = ?, updated_at = ? WHERE id = ?')
           .run(input.status, seq, this.now().toISOString(), input.instanceId);
+        this.reconcileJobs(input.instanceId, input.jobs);
         return this.instanceRow(input.instanceId);
       });
     });
+  }
+
+  listJobs(filter: { type?: string; instanceId?: string } = {}): Promise<JobRecord[]> {
+    return promised(() => {
+      const where: string[] = [];
+      const args: string[] = [];
+      if (filter.type !== undefined) {
+        where.push('type = ?');
+        args.push(filter.type);
+      }
+      if (filter.instanceId !== undefined) {
+        where.push('instance_id = ?');
+        args.push(filter.instanceId);
+      }
+      const clause = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
+      return this.db
+        .prepare(`SELECT * FROM jobs${clause} ORDER BY created_at, token_id`)
+        .all(...args)
+        .map(toJob);
+    });
+  }
+
+  lockJobs(input: LockJobsInput): Promise<JobRecord[]> {
+    return promised(() =>
+      transaction(
+        this.db,
+        () => {
+          const candidates = this.db
+            .prepare(
+              `SELECT instance_id, token_id FROM jobs
+               WHERE type = ? AND (state = 'pending' OR locked_until <= ?)
+               ORDER BY created_at, token_id LIMIT ?`,
+            )
+            .all(input.type, input.now, input.count)
+            .map((row) => [text(row, 'instance_id'), text(row, 'token_id')] as const);
+          const lock = this.db.prepare(
+            `UPDATE jobs SET state = 'locked', worker = ?, locked_until = ?, updated_at = ?
+             WHERE instance_id = ? AND token_id = ?`,
+          );
+          const read = this.db.prepare('SELECT * FROM jobs WHERE instance_id = ? AND token_id = ?');
+          const at = this.now().toISOString();
+          return candidates.map(([instanceId, tokenId]) => {
+            lock.run(input.worker, input.until, at, instanceId, tokenId);
+            const row = read.get(instanceId, tokenId);
+            if (!row) {
+              throw new Error(`Job "${tokenId}" da instância "${instanceId}" sumiu após travar.`);
+            }
+            return toJob(row);
+          });
+        },
+        true,
+      ),
+    );
   }
 
   readInstance(id: string): Promise<InstanceRecord | undefined> {
@@ -279,6 +338,43 @@ export class SqliteStore implements Store {
     const row = this.db.prepare('SELECT * FROM instances WHERE id = ?').get(id);
     if (!row) throw new Error(`Nenhuma instância com o id "${id}".`);
     return toInstance(row);
+  }
+
+  /**
+   * Alinha a tabela com os jobs que o motor ainda tem parados: o que sumiu sai,
+   * o que entrou entra, o que continua fica como está — trava inclusive, para
+   * um comando concorrente não roubar o job de quem já o pegou.
+   */
+  private reconcileJobs(instanceId: string, jobs: JobProjection[]): void {
+    const at = this.now().toISOString();
+    const keep = jobs.map((job) => job.tokenId);
+    const placeholders = keep.map(() => '?').join(', ');
+    this.db
+      .prepare(
+        `DELETE FROM jobs WHERE instance_id = ?${
+          keep.length > 0 ? ` AND token_id NOT IN (${placeholders})` : ''
+        }`,
+      )
+      .run(instanceId, ...keep);
+    const upsert = this.db.prepare(
+      `INSERT INTO jobs (instance_id, token_id, node_id, type, variables, state,
+                         attempts, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+       ON CONFLICT (instance_id, token_id) DO UPDATE SET
+         variables = excluded.variables, attempts = excluded.attempts, updated_at = excluded.updated_at`,
+    );
+    for (const job of jobs) {
+      upsert.run(
+        instanceId,
+        job.tokenId,
+        job.nodeId,
+        job.type,
+        JSON.stringify(job.variables),
+        job.attempts,
+        at,
+        at,
+      );
+    }
   }
 
   private latestDeployment(processKey: string): Deployment | undefined {
