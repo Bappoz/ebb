@@ -4,8 +4,18 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { checksumOf } from '../src/checksum.js';
 import { toJob } from '../src/jobs.js';
+import { integer } from '../src/rows.js';
 import { SqliteStore } from '../src/sqlite.js';
-import type { AppendInput, InstanceRecord, JobProjection, JobRecord } from '../src/types.js';
+import type { AppendInput, InstanceRecord, JobProjection } from '../src/types.js';
+
+/** Expõe `PRAGMA busy_timeout` da conexão — só para o teste de regressão do finding 1. */
+class InspectableStore extends SqliteStore {
+  busyTimeoutMs(): number {
+    const row = this.db.prepare('PRAGMA busy_timeout').get();
+    if (!row) throw new Error('PRAGMA busy_timeout não devolveu linha.');
+    return integer(row, 'timeout');
+  }
+}
 
 const XML = '<definitions><process id="Pedido" /></definitions>';
 const VARS = { pedido: 42 };
@@ -108,7 +118,12 @@ describe('jobs', () => {
     expect(await store.listJobs()).toMatchObject([{ tokenId: 't1', nodeId: 'Ship', type: 'ship' }]);
   });
 
-  it('não entrega duas vezes o mesmo job', async () => {
+  // Só prova que um job já `locked` sai da lista de candidatos da próxima
+  // chamada — as duas rodam na mesma conexão, uma depois da outra, sem
+  // concorrência real. A prova de que dois *processos* não recebem o mesmo
+  // job (o busy timeout do finding 1 segurando a fila) é o teste fim a fim da
+  // tarefa 9, com um `ebb worker` de verdade contra o mesmo arquivo.
+  it('um job travado não é candidato à próxima ativação', async () => {
     await seeded({ jobs: [projection('t1')] });
     const first = await store.lockJobs({
       type: 'charge',
@@ -168,34 +183,6 @@ describe('jobs', () => {
     ).rejects.toThrow(/until/);
   });
 
-  it('não entrega o mesmo job a dois processos disputando o mesmo arquivo', async () => {
-    await seeded({ jobs: [projection('t1')] });
-    // Uma segunda conexão para o mesmo arquivo simula um segundo `ebb worker`:
-    // o `store` do teste e este `second` não compartilham nem transação nem
-    // memória, só o disco — a mesma disputa de um processo de verdade.
-    const second = new SqliteStore({ path: join(dir, 'ebb.db') });
-    try {
-      const results = await Promise.allSettled([
-        store.lockJobs({ type: 'charge', worker: 'w1', count: 1, until: 5_000, now: 1_000 }),
-        second.lockJobs({ type: 'charge', worker: 'w2', count: 1, until: 5_000, now: 1_000 }),
-      ]);
-
-      for (const result of results) {
-        if (result.status === 'rejected') {
-          throw new Error(
-            `lockJobs lançou em vez de esperar a trava do outro processo — o busy timeout ` +
-              `não está funcionando: ${String(result.reason)}`,
-          );
-        }
-      }
-
-      const jobs = (results as PromiseFulfilledResult<JobRecord[]>[]).flatMap((r) => r.value);
-      expect(jobs).toHaveLength(1);
-    } finally {
-      second.close();
-    }
-  });
-
   it('filtra por tipo e por instância', async () => {
     const { instance } = await seeded({
       jobs: [projection('t1'), { ...projection('t2'), type: 'ship' }],
@@ -211,5 +198,25 @@ describe('jobs', () => {
 describe('mapeamento de linha do banco', () => {
   it('rejeita um estado que este código não conhece', () => {
     expect(() => toJob({ ...ROW, state: 'zumbi' })).toThrow(TypeError);
+  });
+});
+
+describe('busy timeout', () => {
+  it('usa 5000ms por padrão', () => {
+    const s = new InspectableStore({ path: join(dir, 'busy-default.db') });
+    try {
+      expect(s.busyTimeoutMs()).toBe(5_000);
+    } finally {
+      s.close();
+    }
+  });
+
+  it('aceita um valor customizado via busyTimeoutMs', () => {
+    const s = new InspectableStore({ path: join(dir, 'busy-custom.db'), busyTimeoutMs: 1_234 });
+    try {
+      expect(s.busyTimeoutMs()).toBe(1_234);
+    } finally {
+      s.close();
+    }
   });
 });

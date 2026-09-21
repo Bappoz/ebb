@@ -97,7 +97,13 @@ export interface SqliteStoreOptions {
  * entra implementando {@link Store}, quando existir mais de um nó.
  */
 export class SqliteStore implements Store {
-  private readonly db: DatabaseSync;
+  /**
+   * `protected`, não `private`: é o seam que o teste de atomicidade
+   * (`instances.test.ts`) e o de `busy_timeout` (`jobs.test.ts`) usam para
+   * inspecionar a conexão de dentro de uma subclasse, sem expor nada no
+   * contrato {@link Store}.
+   */
+  protected readonly db: DatabaseSync;
   private readonly now: () => Date;
 
   constructor(options: SqliteStoreOptions) {
