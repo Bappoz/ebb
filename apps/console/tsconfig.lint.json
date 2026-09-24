@@ -1,0 +1,10 @@
+{
+  // Testes e configs rodam em Node; o `src` compila sem `node` nos tipos, e
+  // `process` no código de navegador vira erro.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"],
+    "rootDir": "../.."
+  },
+  "include": ["src", "test", "*.ts"]
+}

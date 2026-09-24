@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { EbbRuntime } from '@ebb/runtime';
 import { SqliteStore } from '@ebb/store';
 import { deploy, list, versions } from './commands.js';
+import { consoleAssets, runConsole } from './console.js';
 import {
   completeTask,
   listInstances,
@@ -42,6 +43,9 @@ Trabalho:
   ebb retry <id> <token>                roda a atividade de novo a partir do incidente
   ebb resolve <id> <token>              desiste e segue como se tivesse dado certo
   ebb worker <tipo> -- <comando>        executa os jobs de um tipo
+
+Console:
+  ebb console [--port N]                depurador de time-travel no navegador (padrão: 4321)
 
 O <id> aceita qualquer prefixo único, como o git.
 
@@ -272,6 +276,25 @@ async function main(): Promise<number> {
         });
         console.log(result.output);
         return result.exitCode;
+      }
+      case 'console': {
+        let port = 4321;
+        if (argv.includes('--port')) {
+          const portArg = option(argv, 'port');
+          const parsed = Number(portArg);
+          if (portArg === undefined || !Number.isInteger(parsed) || parsed < 0 || parsed > 65_535) {
+            return usageError(
+              `--port esperava um inteiro entre 0 e 65535 e veio "${portArg ?? ''}".`,
+            );
+          }
+          port = parsed;
+        }
+        const assets = consoleAssets();
+        if (!assets) {
+          console.error('✗ O console não foi construído. Rode: npm run build');
+          return 1;
+        }
+        return await runConsole({ store, runtime, port, assets });
       }
       default:
         console.error(`Comando desconhecido "${command}".\n\n${USAGE}`);

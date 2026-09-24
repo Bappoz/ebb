@@ -100,6 +100,22 @@ comando de sempre (`ebb complete <novo> t1 --var valor=50`). A bifurcação é
 viva: um job pendente no passo do corte volta para a fila, e um worker o
 executa.
 
+### No navegador
+
+```bash
+ebb console                         # http://127.0.0.1:4321
+```
+
+O console lista as instâncias e abre um depurador de cada uma: o diagrama
+pintado com o que concluiu, o que espera e os fluxos tomados, e um slider que
+anda comando a comando — voltar despinta o que o passo fez. O painel mostra o
+payload do comando, as variáveis e, em cada gateway, as opções com a condição
+e a tomada destacada, com as variáveis daquele instante. "Bifurcar daqui" cria
+a instância nova a partir do passo e a abre. O passo fica na URL
+(`#/i/<id>?step=2`), então o link leva ao mesmo lugar.
+
+Ele só atende em `127.0.0.1` e recusa `Host` de fora: ainda não há auth.
+
 ### Workers: a service task fora do processo
 
 Uma atividade marcada no diagrama como job externo **espera** por um worker em

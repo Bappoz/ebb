@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ebb console</title>
+  </head>
+  <body>
+    <header class="top">
+      <a href="#/" class="brand">ebb</a>
+      <span id="crumb"></span>
+    </header>
+
+    <p id="error" class="error" hidden></p>
+
+    <main id="list-view" hidden>
+      <table class="instances">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Processo</th>
+            <th>Versão</th>
+            <th>Estado</th>
+            <th>Comandos</th>
+            <th>Origem</th>
+          </tr>
+        </thead>
+        <tbody id="instances"></tbody>
+      </table>
+      <p id="empty" hidden>Nenhuma instância. Comece com: <code>ebb start &lt;chave&gt;</code></p>
+    </main>
+
+    <main id="debugger-view" class="debugger" hidden>
+      <div id="diagram" class="diagram"></div>
+      <aside class="panel">
+        <div class="controls">
+          <button id="prev" type="button" aria-label="Passo anterior">◀</button>
+          <input id="step" type="range" min="1" max="1" value="1" aria-label="Passo" />
+          <button id="next" type="button" aria-label="Próximo passo">▶</button>
+        </div>
+        <h2 id="step-title"></h2>
+        <p id="status" class="status"></p>
+        <pre id="payload" class="payload"></pre>
+        <section id="gateways"></section>
+        <section id="entered"></section>
+        <section id="variables"></section>
+        <section id="tasks"></section>
+        <button id="fork" type="button" class="fork">Bifurcar daqui</button>
+      </aside>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
