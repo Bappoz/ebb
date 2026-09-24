@@ -205,6 +205,9 @@ async function render(): Promise<void> {
     }
   } catch (error) {
     if (ticket !== navigation) return;
+    // Nada da tela anterior fica por baixo do erro, nem o cabeçalho: ele
+    // apontaria para uma instância que não é a da URL.
+    crumb.textContent = '';
     listView.hidden = true;
     debuggerView.hidden = true;
     showError(error);
