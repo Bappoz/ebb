@@ -9,18 +9,19 @@
 
 ## Onde estamos
 
-Chunks 0-2 mergeados em `master` (PRs #1 e #2). PR #58 do `bpmn-flow`
-mergeado. **Chunk 3a (replay e bifurcação) entregue** na branch
-`feat/replay-and-fork`: spec em
-`docs/superpowers/specs/2026-09-24-ebb-chunk-3a-replay-fork.md`, plano ao lado,
-`npm run verify` verde. O próximo passo é o **3b** (`apps/console`, abaixo na
-Seção 1).
+Chunks 0-3a mergeados em `master` (PRs #1, #2 e #3; no `bpmn-flow`, #58 e
+#61). **Chunk 3b (console de time-travel) entregue** na branch
+`feat/console-time-travel`: spec em
+`docs/superpowers/specs/2026-09-24-ebb-chunk-3b-console.md`, plano ao lado,
+`npm run verify` verde e o roteiro do "termina quando" verificado no Chrome.
+**A Seção 1 está fechada.** O próximo passo é a **Seção 2** (teste de processo).
 
-As regras que os chunks 1-3a fixaram (relógio congelado por comando, versão
+As regras que os chunks 1-3b fixaram (relógio congelado por comando, versão
 congelada na instância, journal+snapshot atômicos, job é decisão do diagrama,
 `onHandlerError`/`retry` journalados fora do `EngineState`, reporte≠contabilidade
 de incidente, `jobs` como índice reconciliado com lease fenced, snapshot é cache
-que o journal reconstrói, bifurcação é viva) continuam valendo — ver os commits
+que o journal reconstrói, bifurcação é viva, HTTP só em loopback até existir
+auth) continuam valendo — ver os commits
 de cada chunk para o raciocínio.
 
 ## Dívida técnica que sobrou
@@ -28,13 +29,17 @@ de cada chunk para o raciocínio.
 A dívida do chunk 2 foi paga no 3a: typecheck de teste, guarda do
 `EngineState`, `db` privado, decode UTF-8, `updated_at` só quando muda,
 contenção do lease com dois processos reais e o `activity.end` órfão (este no
-`bpmn-flow`, branch `fix/job-error-activity-end`). Ficam:
+`bpmn-flow`, PR #61). Ficam:
 
 - `ebb incidents` re-hidrata cada instância (O(n)); projetar incidente como se
   projeta job resolveria, mas só vale a pena se alguém sentir a dor.
 - **Resolução de prefixo de id mora no CLI** (`withInstance`), já com dois
-  consumidores. Mover para `EbbRuntime` quando o HTTP (seção 3) virar o
-  terceiro.
+  consumidores. O HTTP do 3b usa o id completo (a lista o entrega), então não
+  virou o terceiro; mover para `EbbRuntime` quando alguma rota aceitar prefixo.
+- Menores do 3a: `fork` com comando que falha deixa a bifurcação gravada sem
+  avisar quem chamou (o HTTP do 3b não aceita comando, então ainda sem efeito);
+  `show --at` lê o journal duas vezes; o teste da cópia das variáveis do gateway
+  não exercita a cópia; `forkInstance` aceita `at = 0`.
 - Sem timeout de processo filho no `ebb worker` — decisão deliberada, mas um
   filho que vaza o fd do stdout para um neto trava o worker (o lease ainda
   devolve o job).
@@ -56,17 +61,13 @@ registra e devolve `undefined`. Isso fecha a pendência de "evento de condição
 avaliada" do design geral. Event-based gateway fica de fora, porque ali a razão
 é o próprio comando.
 
-**3b (próximo)**: `apps/console` com `@bpmn-flow/viewer` e slider de passo.
-O que já está pronto para ele:
-
-- `EbbRuntime.replay(id)` devolve `{ instance, xml, steps }` numa chamada: o
-  XML da versão congelada para `viewer.load(xml)` e, por passo, `snapshot`
-  para `applySnapshot`, `flows` para `markFlowTaken` e `decisions` para o
-  painel de "por quê".
-- `EbbRuntime.fork(id, seq, command?)` aceita o comando junto, para o botão
-  "seguir daqui com outros valores".
-- Falta decidir o transporte: o `@ebb/api` (Hono) é da seção 3. O 3b escolhe o
-  mínimo para servir o console e diz por quê.
+**3b feito**: `ebb console` sobe o `@ebb/api` (Hono) em `127.0.0.1` com três
+rotas (`GET /api/instances`, `GET /api/instances/:id/replay`,
+`POST /api/instances/:id/fork`) e serve o `apps/console` (Vite + TS, sem
+framework). O depurador anda passo a passo (slider, ◀ ▶, setas), pinta do zero
+a cada passo para que voltar despinte, mostra variáveis e cada gateway com as
+opções e a tomada, e bifurca a partir do passo. O passo vive na URL
+(`#/i/<id>?step=n`).
 
 ---
 
@@ -109,12 +110,17 @@ roda em produção — mas precisa de brainstorming antes de codar.
 > Termina quando: uma pessoa conclui uma tarefa no navegador, com formulário
 > vindo das variáveis do processo.
 
-Este é o chunk que introduz HTTP pela primeira vez — decisão de arquitetura
-grande, não código incremental.
+O `@ebb/api` já existe desde o 3b: Hono, `createApp({ store, runtime, assets })`
+e `serveApp` (sempre em `127.0.0.1`). A proteção de hoje vem do lugar em que
+roda: `Host` fora de loopback → `403` (DNS rebinding) e escrita sem
+`Content-Type: application/json` → `415` (CSRF). **Auth substitui a trava de
+loopback em vez de se somar a ela às cegas**: no dia em que o servidor sair de
+127.0.0.1, a checagem de `Host` e a de `Content-Type` precisam ser repensadas
+junto com a API key, não herdadas.
 
 Trabalho:
 
-1. **`@ebb/api`** novo pacote: Hono (já decidido no design), rotas para
+1. **`@ebb/api`** cresce: rotas para
    instância (start/apply/inspect), jobs (ativar/completar/falhar — mesmo
    contrato do `ebb worker`, mas por HTTP long-poll em vez de processo
    filho), tarefas humanas (listar/completar).
@@ -127,9 +133,10 @@ Trabalho:
    visíveis no escopo (schema-less, mais simples, menos preciso) ou suportar
    a extensão do Camunda (mais trabalho, mais compatível com diagrama
    existente). Brainstorming decide isso antes de codar.
-4. **`apps/console`**: inbox de tarefa (lista + completar), lista de
-   incidente (reusa o que o CLI já faz, mas na web), e o visualizador de
-   time-travel da seção 1 se ainda não tiver saído.
+4. **`apps/console`**: inbox de tarefa (lista + completar) e lista de
+   incidente (reusa o que o CLI já faz, mas na web). O depurador de
+   time-travel já existe (3b); "bifurcar com valores novos" entra aqui, junto
+   com o formulário.
 5. Mover a resolução de prefixo de id (`withInstance`) para `EbbRuntime`
    agora que o HTTP é o terceiro consumidor — dívida nomeada desde o chunk 1.
 
