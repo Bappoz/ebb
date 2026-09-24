@@ -1,0 +1,24 @@
+{
+  "name": "@ebb/console",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The ebb console: rewind an instance step by step on its diagram, and fork it.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.lint.json"
+  },
+  "dependencies": {
+    "@bpmn-flow/viewer": "file:../../../bpmn-flow/packages/viewer"
+  },
+  "devDependencies": {
+    "@ebb/runtime": "^0.0.0",
+    "@ebb/store": "^0.0.0",
+    "vite": "^8.3.0"
+  }
+}

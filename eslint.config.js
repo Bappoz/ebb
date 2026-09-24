@@ -12,7 +12,11 @@ export default tseslint.config(
   {
     languageOptions: {
       parserOptions: {
-        project: ['./tsconfig.lint.json', './packages/*/tsconfig.lint.json'],
+        project: [
+          './tsconfig.lint.json',
+          './packages/*/tsconfig.lint.json',
+          './apps/*/tsconfig.lint.json',
+        ],
         tsconfigRootDir: import.meta.dirname,
       },
     },
