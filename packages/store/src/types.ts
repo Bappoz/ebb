@@ -105,6 +105,42 @@ export interface StoredEngineState extends EngineStateInput {
   seq: number;
 }
 
+/**
+ * O que o motor sabe sobre um job parado num token, sem nada de trava — a
+ * trava é do store, não do motor.
+ */
+export interface JobProjection {
+  tokenId: string;
+  nodeId: string;
+  type: string;
+  variables: Record<string, unknown>;
+  /**
+   * Projeção da contabilidade de incidente do motor, só para exibição: o
+   * store guarda o número que recebe e nunca o incrementa sozinho.
+   */
+  attempts: number;
+}
+
+/** Uma linha da tabela `jobs`. */
+export interface JobRecord extends JobProjection {
+  instanceId: string;
+  state: 'pending' | 'locked';
+  worker?: string;
+  lockedUntil?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LockJobsInput {
+  type: string;
+  worker: string;
+  count: number;
+  /** Epoch ms em que a trava vence. */
+  until: number;
+  /** Epoch ms de agora, para reconhecer trava vencida. */
+  now: number;
+}
+
 export interface CreateInstanceInput {
   id: string;
   processKey: string;
@@ -112,6 +148,7 @@ export interface CreateInstanceInput {
   status: InstanceStatus;
   command: CommandInput;
   state: EngineStateInput;
+  jobs: JobProjection[];
 }
 
 export interface AppendInput {
@@ -119,6 +156,7 @@ export interface AppendInput {
   status: InstanceStatus;
   command: CommandInput;
   state: EngineStateInput;
+  jobs: JobProjection[];
 }
 
 /**
@@ -170,6 +208,29 @@ export interface Store {
    * curto como o git. Vazio quando nenhuma casa.
    */
   findInstances(prefix: string): Promise<InstanceRecord[]>;
+
+  /**
+   * Jobs pendentes ou travados, na ordem em que nasceram. Sem filtro, é toda
+   * instância — é a varredura que um worker faz sem re-hidratar motor nenhum.
+   */
+  listJobs(filter?: { type?: string; instanceId?: string }): Promise<JobRecord[]>;
+
+  /**
+   * Trava até `count` jobs pendentes (ou cuja trava venceu) do tipo pedido,
+   * para o worker que chamou. Um job só é entregue a quem ganhou a corrida.
+   */
+  lockJobs(input: LockJobsInput): Promise<JobRecord[]>;
+
+  /**
+   * Devolve um job travado à fila, sem tocar em mais nada da instância: só
+   * este `tokenId` volta a `state: 'pending'`, sem worker nem lease.
+   *
+   * `worker` cerca a operação: só libera quando é quem hoje segura a trava.
+   * Sem isto, um `w1` que demorou, perdeu o lease para um `w2` e só depois
+   * reporta o resultado antigo derrubaria a trava legítima de `w2`. Não-op
+   * (não lança) quando a linha já sumiu ou está travada para outro worker.
+   */
+  releaseJob(instanceId: string, tokenId: string, worker: string): Promise<void>;
 
   close(): void;
 }

@@ -163,10 +163,11 @@ describe('SqliteStore', () => {
       .map((row) => row.name);
     raw.close();
 
-    expect(SCHEMA_VERSION).toBe(2);
+    expect(SCHEMA_VERSION).toBe(3);
     expect(tables).toContain('instances');
     expect(tables).toContain('instance_journal');
     expect(tables).toContain('instance_state');
+    expect(tables).toContain('jobs');
   });
 });
 

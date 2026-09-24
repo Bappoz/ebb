@@ -1,3 +1,4 @@
+import { BpmnError } from '@bpmn-flow/core';
 import type {
   EngineMode,
   ExecutionSnapshot,
@@ -6,15 +7,23 @@ import type {
 } from '@bpmn-flow/core';
 
 /**
- * Os três campos de `EngineOptions` que mudam a execução — `expressions`
- * decide, por exemplo, qual ramo um gateway toma. Vivem no comando `start`
- * para que um replay do zero saiba com que motor a instância nasceu, em vez
- * de herdar o padrão de `@bpmn-flow/core` do momento em que roda o replay.
+ * Os campos de `EngineOptions` que mudam a execução — `expressions` decide,
+ * por exemplo, qual ramo um gateway toma. Vivem no comando `start` para que um
+ * replay do zero saiba com que motor a instância nasceu, em vez de herdar o
+ * padrão de `@bpmn-flow/core` do momento em que roda o replay.
  */
 export interface StartEngineOptions {
   mode: EngineMode;
   maxSteps: number;
   expressions: ExpressionMode;
+  /**
+   * As duas opções que o motor não guarda no estado nem devolve em
+   * `getState()`. Sem elas no journal, uma instância re-hidratada volta com o
+   * padrão `'fail'` e perde o incidente — e um replay reconstruiria uma
+   * execução diferente da que aconteceu.
+   */
+  onHandlerError: 'fail' | 'incident';
+  retry: { attempts: number };
 }
 
 /**
@@ -28,7 +37,11 @@ export type InstanceCommand =
   | { type: 'start'; variables?: Record<string, unknown>; engine: StartEngineOptions }
   | { type: 'completeTask'; tokenId: string; output?: Record<string, unknown> }
   | { type: 'signal'; name: string; output?: Record<string, unknown> }
-  | { type: 'tick' };
+  | { type: 'tick' }
+  | { type: 'completeJob'; tokenId: string; output?: Record<string, unknown> }
+  | { type: 'failJob'; tokenId: string; error: { message: string; code?: string } }
+  | { type: 'retryTask'; tokenId: string }
+  | { type: 'resolveIncident'; tokenId: string; output?: Record<string, unknown> };
 
 /** Aplica um comando ao motor. O único caminho — ao vivo e no replay. */
 export function applyCommand(
@@ -48,6 +61,23 @@ export function applyCommand(
       // Sem argumento de propósito: o relógio do motor já está congelado no
       // instante que o journal gravou.
       return engine.tick();
+    case 'completeJob':
+      return engine.completeTask(command.tokenId, command.output);
+    case 'failJob':
+      // O erro é gravado como dado porque um Error não sobrevive a
+      // JSON.stringify, e o replay tem de reproduzir a mesma falha: com código
+      // é erro de negócio (boundary de erro), sem código é falha técnica
+      // (retry e incidente).
+      return engine.failJob(
+        command.tokenId,
+        command.error.code
+          ? new BpmnError(command.error.code, command.error.message)
+          : new Error(command.error.message),
+      );
+    case 'retryTask':
+      return engine.retryTask(command.tokenId);
+    case 'resolveIncident':
+      return engine.resolveIncident(command.tokenId, command.output);
   }
 }
 

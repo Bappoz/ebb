@@ -1,7 +1,12 @@
 import { ENGINE_STATE_VERSION } from '@bpmn-flow/core';
 import { checksumOf, SqliteStore } from '@ebb/store';
+import type { InstanceRecord } from '@ebb/store';
 import { describe, expect, it } from 'vitest';
-import { EngineStateMismatchError, InstanceNotFoundError } from '../src/errors.js';
+import {
+  EngineStateMismatchError,
+  InstanceNotFoundError,
+  InstanceTerminatedError,
+} from '../src/errors.js';
 import { EbbRuntime } from '../src/runtime.js';
 import { PEDIDO } from './fixtures.js';
 
@@ -18,6 +23,20 @@ async function fixture(): Promise<{ store: SqliteStore; runtime: EbbRuntime }> {
     newId: () => `inst-${++ids}`,
   });
   return { store, runtime };
+}
+
+/** Uma instância do `Pedido` já concluída, para testar a guarda de status terminal. */
+async function completedInstance(): Promise<{ runtime: EbbRuntime; instance: InstanceRecord }> {
+  const { runtime } = await fixture();
+  const started = await runtime.start('Pedido');
+  const [task] = started.tasks;
+  if (!task) throw new Error('nenhuma tarefa pendente');
+
+  const done = await runtime.apply('inst-1', {
+    type: 'completeTask',
+    tokenId: task.tokenId,
+  });
+  return { runtime, instance: done.instance };
 }
 
 describe('EbbRuntime.start', () => {
@@ -45,7 +64,13 @@ describe('EbbRuntime.start', () => {
     expect(first).toMatchObject({ seq: 1, type: 'start', at: AT });
     expect(first?.payload).toEqual({
       variables: { total: 42 },
-      engine: { mode: 'automation', maxSteps: 100_000, expressions: 'safe' },
+      engine: {
+        mode: 'automation',
+        maxSteps: 100_000,
+        expressions: 'safe',
+        onHandlerError: 'incident',
+        retry: { attempts: 0 },
+      },
     });
     store.close();
   });
@@ -56,9 +81,21 @@ describe('EbbRuntime.start', () => {
 
     const [first] = await store.journal('inst-1');
     const payload = first?.payload as {
-      engine?: { mode: string; maxSteps: number; expressions: string };
+      engine?: {
+        mode: string;
+        maxSteps: number;
+        expressions: string;
+        onHandlerError: string;
+        retry: { attempts: number };
+      };
     };
-    expect(payload.engine).toEqual({ mode: 'automation', maxSteps: 100_000, expressions: 'safe' });
+    expect(payload.engine).toEqual({
+      mode: 'automation',
+      maxSteps: 100_000,
+      expressions: 'safe',
+      onHandlerError: 'incident',
+      retry: { attempts: 0 },
+    });
     store.close();
   });
 
@@ -167,11 +204,24 @@ describe('EbbRuntime.inspect', () => {
       status: 'waiting',
       command: { type: 'tick', payload: {}, at: AT },
       state: { engineVersion: ENGINE_STATE_VERSION - 1, json: '{}' },
+      jobs: [],
     });
 
     await expect(runtime.inspect('inst-1')).rejects.toThrow(EngineStateMismatchError);
     await expect(runtime.inspect('inst-1')).rejects.toThrow(/journal está intacto/);
     store.close();
+  });
+});
+
+describe('a guarda de status terminal', () => {
+  it('recusa comando em instância terminada', async () => {
+    const { runtime, instance } = await completedInstance();
+
+    await expect(runtime.apply(instance.id, { type: 'tick' })).rejects.toThrow(
+      InstanceTerminatedError,
+    );
+    // O journal não cresceu.
+    expect((await runtime.inspect(instance.id)).journal).toHaveLength(instance.seq);
   });
 });
 

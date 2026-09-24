@@ -5,8 +5,9 @@ Orquestração de processos **BPMN 2.0** que você pode rebobinar.
 Livre de verdade (Apache-2.0), nativo em TypeScript, e sobe com um comando —
 sem JVM, sem Elasticsearch, sem build nativo.
 
-> **Estado: chunk 0 de 8.** Publica e versiona definição de processo. O runtime
-> durável, os workers e o time-travel vêm nos próximos.
+> **Estado: chunk 2 de 8.** Publica definições, roda instâncias com journal
+> durável e entrega service tasks a workers em outro processo, com retry e
+> incidente. O time-travel vem no próximo.
 > Desenho completo em [`docs/superpowers/specs/2026-09-14-ebb-design.md`](docs/superpowers/specs/2026-09-14-ebb-design.md).
 
 ## Por que existe
@@ -74,6 +75,50 @@ próxima invocação continua de onde a anterior parou.
 O banco fica em `.ebb/ebb.db`, relativo ao diretório de trabalho — como
 `node_modules/`, é do projeto. Mude com `--store` ou `EBB_STORE`.
 
+### Workers: a service task fora do processo
+
+Uma atividade marcada no diagrama como job externo **espera** por um worker em
+vez de passar direto. Vale a convenção do Camunda 8 ou a do Camunda 7:
+
+```xml
+<bpmn:serviceTask id="Charge" name="Cobrar">
+  <bpmn:extensionElements>
+    <zeebe:taskDefinition type="charge" />
+  </bpmn:extensionElements>
+</bpmn:serviceTask>
+<!-- ou: <bpmn:serviceTask camunda:type="external" camunda:topic="charge" /> -->
+```
+
+```bash
+ebb start Pedido --var total=42 --retries 2   # tentativas automáticas antes do incidente
+ebb jobs                                      # o trabalho esperando worker
+ebb worker charge -- ./charge.sh              # noutro terminal: executa os jobs "charge"
+ebb incidents                                 # o que parou por falha
+ebb retry <id> <token>                        # roda a atividade de novo
+ebb resolve <id> <token> --var cobrado=false  # desiste e segue como se tivesse dado certo
+```
+
+O `ebb worker` roda **um processo filho por job**. O contrato com o seu script:
+
+| Entrada / saída                                        | O que acontece                                                      |
+| ------------------------------------------------------ | ------------------------------------------------------------------- |
+| stdin                                                  | JSON: `{ instanceId, tokenId, nodeId, type, variables }`            |
+| saída 0, stdout um objeto                              | o objeto vira variáveis do processo                                 |
+| saída 0, stdout vazio                                  | conclui sem variável nova                                           |
+| saída 0, stdout ilegível                               | **falha** — um worker que imprime lixo não sabe o que fez           |
+| saída ≠ 0                                              | falha técnica: retry e depois incidente, com o stderr como mensagem |
+| saída ≠ 0 com `{"error":{"code","message"}}` no stdout | erro de negócio: dispara o boundary de erro do diagrama             |
+
+> **Cuidado com o erro de negócio.** Sem um boundary event de erro casando com o
+> `code`, ele **derruba a instância inteira** — não abre incidente, não faz
+> retry, não há o que resolver. Use `code` só quando o diagrama o captura.
+
+Opções: `--once` (uma rodada e sai), `--lease <ms>` (padrão 60000), `--interval
+<ms>` entre sondagens vazias, `--count <n>` jobs por rodada. Um worker que
+morre segurando um job o devolve **quando o lease vence** — não por heartbeat.
+Não há timeout de processo filho: um script que trava mantém o worker parado,
+embora o job volte para a fila no fim do lease.
+
 ### Publicar é um portão, não um upload
 
 `deploy` roda a validação do `@bpmn-flow/core` e **recusa** um diagrama com
@@ -85,10 +130,11 @@ qualquer byte diferente cria.
 
 ## Como está dividido
 
-| Pacote       | O que é                                                            |
-| ------------ | ------------------------------------------------------------------ |
-| `@ebb/store` | Persistência. SQLite via `node:sqlite`; Postgres quando houver HA. |
-| `@ebb/cli`   | `deploy`, `ls`, `versions`.                                        |
+| Pacote         | O que é                                                            |
+| -------------- | ------------------------------------------------------------------ |
+| `@ebb/store`   | Persistência. SQLite via `node:sqlite`; Postgres quando houver HA. |
+| `@ebb/runtime` | Ciclo de vida de instância: aplica comando, journala, persiste.    |
+| `@ebb/cli`     | Definições, instâncias, jobs, incidentes e `ebb worker`.           |
 
 ## Desenvolvimento
 

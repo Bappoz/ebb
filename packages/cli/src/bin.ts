@@ -12,8 +12,10 @@ import {
   startInstance,
   tickInstance,
 } from './instances.js';
+import { listIncidents, listJobs, resolveIncident, retryTask } from './jobs.js';
 import { resolveStorePath } from './paths.js';
 import { parseVars } from './vars.js';
+import { runWorker } from './worker.js';
 
 const USAGE = `ebb — processos BPMN que você pode rebobinar
 
@@ -31,6 +33,13 @@ Instâncias:
   ebb tick <id> [--at <iso>]            dispara os timers vencidos
   ebb journal <id>                      os comandos aplicados, em ordem
 
+Trabalho:
+  ebb jobs                              o trabalho esperando worker
+  ebb incidents                         o que parou por falha
+  ebb retry <id> <token>                roda a atividade de novo a partir do incidente
+  ebb resolve <id> <token>              desiste e segue como se tivesse dado certo
+  ebb worker <tipo> -- <comando>        executa os jobs de um tipo
+
 O <id> aceita qualquer prefixo único, como o git.
 
 Opções:
@@ -38,12 +47,32 @@ Opções:
   --force             publica mesmo com aviso de validação
   --var chave=valor   variável de processo; JSON quando parseia, texto quando não
   --at <iso>          instante que o tick usa, em vez do relógio de parede
+  --retries N         tentativas automáticas antes de virar incidente (padrão: 0)
+  --once              (worker) uma rodada e sai, em vez de laço
+  --lease <ms>        (worker) por quanto tempo o job fica travado (padrão: 60000)
+  --interval <ms>     (worker) intervalo entre sondagens sem job (padrão: 1000)
+  --count <n>         (worker) jobs por rodada (padrão: 1)
 `;
 
 /** Valor de uma opção `--nome valor`. */
 function option(argv: string[], name: string): string | undefined {
   const index = argv.indexOf(`--${name}`);
   return index >= 0 ? argv[index + 1] : undefined;
+}
+
+/** Sentinela: a opção veio, mas não parseou como inteiro positivo. */
+const INVALID = Symbol('invalid');
+
+/** Opção `--nome N` como inteiro > 0, `undefined` quando ausente, `INVALID` quando inválida. */
+function positiveInteger(argv: string[], name: string): number | undefined | typeof INVALID {
+  const raw = option(argv, name);
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : INVALID;
+}
+
+function invalidOption(name: string, raw: string | undefined): string {
+  return `--${name} esperava um inteiro positivo e veio "${raw ?? ''}".`;
 }
 
 async function main(): Promise<number> {
@@ -54,7 +83,12 @@ async function main(): Promise<number> {
     return command ? 0 : 2;
   }
 
-  const store = new SqliteStore({ path: resolveStorePath(option(argv, 'store')) });
+  // `worker` carrega o próprio comando depois de `--`, e um argumento do
+  // filho como `--store` não pode ser confundido com a opção do `ebb`: as
+  // opções globais só existem antes do separador.
+  const separatorIndex = argv.indexOf('--');
+  const globalArgv = separatorIndex >= 0 ? argv.slice(0, separatorIndex) : argv;
+  const store = new SqliteStore({ path: resolveStorePath(option(globalArgv, 'store')) });
   const runtime = new EbbRuntime({ store });
   try {
     switch (command) {
@@ -91,9 +125,18 @@ async function main(): Promise<number> {
             return usageError(`--version esperava um inteiro e veio "${versionArg}".`);
           }
         }
+        const retriesArg = option(argv, 'retries');
+        let attempts: number | undefined;
+        if (retriesArg !== undefined) {
+          attempts = Number(retriesArg);
+          if (!Number.isInteger(attempts) || attempts < 0) {
+            return usageError(`--retries esperava um inteiro >= 0 e veio "${retriesArg}".`);
+          }
+        }
         const result = await startInstance(runtime, key, {
           variables: parseVars(argv),
           ...(version === undefined ? {} : { version }),
+          ...(attempts === undefined ? {} : { engine: { retry: { attempts } } }),
         });
         console.log(result.output);
         return result.exitCode;
@@ -146,6 +189,63 @@ async function main(): Promise<number> {
         const id = argv[1];
         if (!id || id.startsWith('--')) return usageError('Informe o id da instância.');
         const result = await showJournal(store, id);
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'jobs': {
+        const result = await listJobs(store, {});
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'incidents': {
+        const result = await listIncidents(store, runtime);
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'retry': {
+        const id = argv[1];
+        const token = argv[2];
+        if (!id || id.startsWith('--') || !token || token.startsWith('--')) {
+          return usageError('Informe o id da instância e o token da tarefa.');
+        }
+        const result = await retryTask(store, runtime, id, token);
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'resolve': {
+        const id = argv[1];
+        const token = argv[2];
+        if (!id || id.startsWith('--') || !token || token.startsWith('--')) {
+          return usageError('Informe o id da instância e o token da tarefa.');
+        }
+        const result = await resolveIncident(store, runtime, id, token, parseVars(argv));
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'worker': {
+        const type = argv[1];
+        if (!type || type.startsWith('--')) return usageError('Informe o tipo do job.');
+        const command = separatorIndex >= 0 ? argv.slice(separatorIndex + 1) : [];
+        if (command.length === 0) {
+          return usageError('Informe o comando depois de --.');
+        }
+        const flags = globalArgv;
+        const lease = positiveInteger(flags, 'lease');
+        if (lease === INVALID) return usageError(invalidOption('lease', option(flags, 'lease')));
+        const interval = positiveInteger(flags, 'interval');
+        if (interval === INVALID) {
+          return usageError(invalidOption('interval', option(flags, 'interval')));
+        }
+        const count = positiveInteger(flags, 'count');
+        if (count === INVALID) return usageError(invalidOption('count', option(flags, 'count')));
+        const result = await runWorker(runtime, {
+          type,
+          command,
+          once: flags.includes('--once'),
+          ...(lease === undefined ? {} : { lease }),
+          ...(interval === undefined ? {} : { interval }),
+          ...(count === undefined ? {} : { count }),
+        });
         console.log(result.output);
         return result.exitCode;
       }

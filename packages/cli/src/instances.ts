@@ -4,11 +4,12 @@ import type { CommandResult } from './commands.js';
 import { CHECK, CROSS, table } from './output.js';
 
 /** Quanto de um id aparece numa listagem; o CLI aceita qualquer prefixo único. */
-const SHORT = 8;
+export const SHORT = 8;
 
 export interface StartCliOptions {
   version?: number;
   variables?: Record<string, unknown>;
+  engine?: { onHandlerError?: 'fail' | 'incident'; retry?: { attempts: number } };
 }
 
 /** `ebb start <chave>` — instancia um processo publicado. */
@@ -149,8 +150,12 @@ export async function showJournal(store: Store, prefix: string): Promise<Command
  *
  * Prefixo ambíguo lista as candidatas em vez de escolher uma: aplicar um
  * comando na instância errada não tem desfazer.
+ *
+ * Exportado porque `jobs.ts` (retry/resolve por prefixo de instância) é o
+ * segundo consumidor desta regra — duplicá-la lá reabriria a chance de os
+ * dois divergirem sobre o que é "ambíguo".
  */
-async function withInstance(
+export async function withInstance(
   store: Store,
   prefix: string,
   fn: (instance: InstanceRecord) => Promise<CommandResult>,

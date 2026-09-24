@@ -11,5 +11,6 @@ export {
   tickInstance,
 } from './instances.js';
 export type { StartCliOptions } from './instances.js';
+export { listIncidents, listJobs, resolveIncident, retryTask } from './jobs.js';
 export { parseVars } from './vars.js';
 export { CHECK, CROSS, table, WARN } from './output.js';
