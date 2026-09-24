@@ -1,5 +1,6 @@
 import { InstanceNotFoundError, ReplayRangeError, type EbbRuntime } from '@ebb/runtime';
 import type { Store } from '@ebb/store';
+import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 
 export interface AppOptions {
@@ -61,6 +62,16 @@ export function createApp(options: AppOptions): Hono {
   });
 
   app.all('/api/*', (c) => c.json({ error: 'Rota desconhecida.' }, 404));
+
+  if (options.assets) {
+    // `serveStatic` recusa caminho com `..` (getFilePath do Hono), e o
+    // fallback abaixo sempre entrega o mesmo arquivo: nada fora de `assets`
+    // sai por aqui.
+    app.use('*', serveStatic({ root: options.assets }));
+    // O console roteia por hash, mas um link colado com caminho não pode dar
+    // tela em branco: qualquer outra rota recebe o index.
+    app.get('*', serveStatic({ root: options.assets, path: 'index.html' }));
+  }
 
   app.notFound((c) => c.json({ error: 'Não encontrado.' }, 404));
 

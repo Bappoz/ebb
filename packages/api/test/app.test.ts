@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { EbbRuntime } from '@ebb/runtime';
 import { checksumOf, SqliteStore } from '@ebb/store';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -207,5 +210,60 @@ describe('bifurcar', () => {
 
     expect(res.status).toBe(404);
     expect(await store.readInstance('inst-2')).toBeUndefined();
+  });
+});
+
+describe('estático', () => {
+  let root: string;
+  let assets: string;
+
+  beforeEach(async () => {
+    root = await mkdtemp(join(tmpdir(), 'ebb-assets-'));
+    assets = join(root, 'dist');
+    await mkdir(join(assets, 'assets'), { recursive: true });
+    await writeFile(join(assets, 'index.html'), '<!doctype html><title>console</title>');
+    await writeFile(join(assets, 'assets', 'app.js'), 'console.log(1)');
+    // Fora de `assets`, ao lado: o que traversal tentaria ler.
+    await writeFile(join(root, 'segredo.txt'), 'não deveria sair');
+  });
+
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('serve o index na raiz e os arquivos do build', async () => {
+    const app = createApp({ store, runtime, assets });
+
+    const index = await app.request('/');
+    expect(index.status).toBe(200);
+    expect(await index.text()).toContain('<title>console</title>');
+
+    const script = await app.request('/assets/app.js');
+    expect(script.status).toBe(200);
+    expect(script.headers.get('content-type')).toContain('javascript');
+  });
+
+  it('rota desconhecida fora da api cai no index', async () => {
+    const res = await createApp({ store, runtime, assets }).request('/i/qualquer');
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('<title>console</title>');
+  });
+
+  it.each(['/%2e%2e/segredo.txt', '/..%2fsegredo.txt', '/assets/%2e%2e/%2e%2e/segredo.txt'])(
+    'nunca serve arquivo fora de assets (%s)',
+    async (path) => {
+      const res = await createApp({ store, runtime, assets }).request(path);
+      expect(await res.text()).not.toContain('não deveria sair');
+    },
+  );
+
+  it('a api continua respondendo JSON com assets ligado', async () => {
+    const res = await createApp({ store, runtime, assets }).request('/api/nada');
+    expect(res.status).toBe(404);
+    expect(await errorOf(res)).not.toBe('');
+  });
+
+  it('sem assets, a raiz é 404', async () => {
+    expect((await createApp({ store, runtime }).request('/')).status).toBe(404);
   });
 });
