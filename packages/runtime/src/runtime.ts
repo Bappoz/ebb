@@ -16,7 +16,7 @@ import {
 } from './commands.js';
 import { InstanceNotFoundError, InstanceTerminatedError } from './errors.js';
 import { projectJobs } from './jobs.js';
-import { replayJournal } from './replay.js';
+import { replayJournal, ReplayRangeError, type ReplayStep } from './replay.js';
 import { parseEngineState } from './state.js';
 
 /** Estados de onde não se sai: comando aqui só sujaria o journal. */
@@ -48,6 +48,13 @@ export interface CommandResult {
 
 export interface InstanceView extends CommandResult {
   journal: JournalEntry[];
+}
+
+export interface ReplayView {
+  instance: InstanceRecord;
+  /** O XML da versão com que a instância nasceu — o que o viewer desenha. */
+  xml: string;
+  steps: ReplayStep[];
 }
 
 /**
@@ -171,6 +178,56 @@ export class EbbRuntime {
       incidents: engine.incidentList(),
       journal,
     };
+  }
+
+  /**
+   * Reconstrói os passos de uma instância a partir do journal. Não escreve:
+   * rebobinar é leitura.
+   */
+  async replay(instanceId: string, upTo?: number): Promise<ReplayView> {
+    const instance = await this.store.readInstance(instanceId);
+    if (!instance) throw new InstanceNotFoundError(instanceId);
+    const deployment = await this.deploymentOf(instance);
+    const journal = await this.store.journal(instanceId);
+    const { steps } = await replayJournal(
+      deployment.xml,
+      journal,
+      upTo === undefined ? {} : { upTo },
+    );
+    return { instance, xml: deployment.xml, steps };
+  }
+
+  /**
+   * Cria uma instância nova parada no passo `seq` de outra e, se vier,
+   * aplica `command` nela.
+   *
+   * A bifurcação é viva: um job pendente no corte volta para a fila e um
+   * worker o executa. É o "seguir com outras variáveis" do time-travel, não
+   * efeito colateral. O journal da original não é tocado.
+   */
+  async fork(instanceId: string, seq: number, command?: InstanceCommand): Promise<CommandResult> {
+    const instance = await this.store.readInstance(instanceId);
+    if (!instance) throw new InstanceNotFoundError(instanceId);
+    const deployment = await this.deploymentOf(instance);
+    const journal = await this.store.journal(instanceId);
+    const { engine, steps } = await replayJournal(deployment.xml, journal, { upTo: seq });
+    const cut = steps.at(-1);
+    // replayJournal já recusou seq fora de [1, último], então há ao menos um passo.
+    if (!cut) throw new ReplayRangeError(seq, journal.length);
+
+    const forked = await this.store.forkInstance({
+      id: this.newId(),
+      from: instance.id,
+      at: seq,
+      status: cut.snapshot.status,
+      journal: journal.slice(0, seq),
+      state: { engineVersion: ENGINE_STATE_VERSION, json: JSON.stringify(engine.getState()) },
+      jobs: projectJobs(engine),
+    });
+    // Transação à parte de propósito: a bifurcação sem comando já é um estado
+    // válido, então não há atomicidade a perder entre as duas escritas.
+    if (command) return this.apply(forked.id, command);
+    return { instance: forked, snapshot: cut.snapshot, tasks: cut.tasks, incidents: cut.incidents };
   }
 
   /**

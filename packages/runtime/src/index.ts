@@ -5,4 +5,10 @@ export type { InstanceCommand, StartEngineOptions } from './commands.js';
 export { InstanceNotFoundError, InstanceTerminatedError } from './errors.js';
 export { EbbRuntime } from './runtime.js';
 export { projectJobs } from './jobs.js';
-export type { CommandResult, EbbRuntimeOptions, InstanceView, StartOptions } from './runtime.js';
+export type {
+  CommandResult,
+  EbbRuntimeOptions,
+  InstanceView,
+  ReplayView,
+  StartOptions,
+} from './runtime.js';
