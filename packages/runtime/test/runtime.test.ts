@@ -2,11 +2,7 @@ import { ENGINE_STATE_VERSION } from '@bpmn-flow/core';
 import { checksumOf, SqliteStore } from '@ebb/store';
 import type { InstanceRecord } from '@ebb/store';
 import { describe, expect, it } from 'vitest';
-import {
-  EngineStateMismatchError,
-  InstanceNotFoundError,
-  InstanceTerminatedError,
-} from '../src/errors.js';
+import { InstanceNotFoundError, InstanceTerminatedError } from '../src/errors.js';
 import { EbbRuntime } from '../src/runtime.js';
 import { PEDIDO } from './fixtures.js';
 
@@ -195,9 +191,9 @@ describe('EbbRuntime.inspect', () => {
     store.close();
   });
 
-  it('falha com a própria mensagem quando o esquema do motor mudou', async () => {
+  it('reconstrói pelo journal quando o esquema do motor mudou, e se cura no próximo comando', async () => {
     const { store, runtime } = await fixture();
-    await runtime.start('Pedido');
+    const started = await runtime.start('Pedido', { variables: { total: 42 } });
     // Simula um ebb atualizado lendo o que a versão anterior gravou.
     await store.append({
       instanceId: 'inst-1',
@@ -207,8 +203,31 @@ describe('EbbRuntime.inspect', () => {
       jobs: [],
     });
 
-    await expect(runtime.inspect('inst-1')).rejects.toThrow(EngineStateMismatchError);
-    await expect(runtime.inspect('inst-1')).rejects.toThrow(/journal está intacto/);
+    const view = await runtime.inspect('inst-1');
+    expect(view.snapshot.variables).toMatchObject({ total: 42 });
+    expect(view.tasks.map((task) => task.nodeId)).toEqual(['Separar']);
+    // Ler não escreve: o snapshot velho continua lá até um comando.
+    expect((await store.readInstanceState('inst-1'))?.engineVersion).toBe(ENGINE_STATE_VERSION - 1);
+
+    const [task] = started.tasks;
+    await runtime.apply('inst-1', { type: 'completeTask', tokenId: task?.tokenId ?? '' });
+    expect((await store.readInstanceState('inst-1'))?.engineVersion).toBe(ENGINE_STATE_VERSION);
+    store.close();
+  });
+
+  it('reconstrói pelo journal quando o snapshot tem a versão certa e a forma errada', async () => {
+    const { store, runtime } = await fixture();
+    await runtime.start('Pedido', { variables: { total: 42 } });
+    await store.append({
+      instanceId: 'inst-1',
+      status: 'waiting',
+      command: { type: 'tick', payload: {}, at: AT },
+      state: { engineVersion: ENGINE_STATE_VERSION, json: '{"nope":true}' },
+      jobs: [],
+    });
+
+    const view = await runtime.inspect('inst-1');
+    expect(view.tasks.map((task) => task.nodeId)).toEqual(['Separar']);
     store.close();
   });
 });

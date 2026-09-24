@@ -5,8 +5,8 @@ import {
   parseBpmn,
   WorkflowEngine,
 } from '@bpmn-flow/core';
-import type { EngineState, ExecutionSnapshot, IncidentState, PendingTask } from '@bpmn-flow/core';
-import type { InstanceRecord, JobRecord, JournalEntry, Store } from '@ebb/store';
+import type { ExecutionSnapshot, IncidentState, PendingTask } from '@bpmn-flow/core';
+import type { Deployment, InstanceRecord, JobRecord, JournalEntry, Store } from '@ebb/store';
 import {
   applyCommand,
   parseStartEngineOptions,
@@ -14,12 +14,10 @@ import {
   type InstanceCommand,
   type StartEngineOptions,
 } from './commands.js';
-import {
-  EngineStateMismatchError,
-  InstanceNotFoundError,
-  InstanceTerminatedError,
-} from './errors.js';
+import { InstanceNotFoundError, InstanceTerminatedError } from './errors.js';
 import { projectJobs } from './jobs.js';
+import { replayJournal } from './replay.js';
+import { parseEngineState } from './state.js';
 
 /** Estados de onde não se sai: comando aqui só sujaria o journal. */
 const TERMINAL: ReadonlySet<string> = new Set(['completed', 'terminated', 'failed']);
@@ -256,24 +254,18 @@ export class EbbRuntime {
     const instance = await this.store.readInstance(instanceId);
     if (!instance) throw new InstanceNotFoundError(instanceId);
 
-    // A versão com que a instância começou, não a mais recente: um redeploy não
-    // troca o modelo debaixo de uma instância viva.
-    const deployment = await this.store.read(instance.processKey, instance.version);
-    if (!deployment) {
-      throw new Error(
-        `A instância ${instanceId} aponta para ${instance.processKey} v${instance.version}, que não está publicado.`,
-      );
-    }
-
+    const deployment = await this.deploymentOf(instance);
+    const log = journal ?? (await this.store.journal(instanceId));
     const stored = await this.store.readInstanceState(instanceId);
-    if (!stored) throw new Error(`A instância ${instanceId} não tem estado gravado.`);
-    if (stored.engineVersion !== ENGINE_STATE_VERSION) {
-      throw new EngineStateMismatchError(instanceId, stored.engineVersion, ENGINE_STATE_VERSION);
-    }
+    // Snapshot é cache: versão de motor diferente, forma inválida ou ausência
+    // não tornam a instância ilegível, só mais cara — reconstrói pelo journal.
+    // Quem regrava na versão atual é o próximo `apply`; ler não escreve.
+    const cached =
+      stored?.engineVersion === ENGINE_STATE_VERSION ? parseEngineState(stored.json) : undefined;
+    const state = cached ?? (await replayJournal(deployment.xml, log)).engine.getState();
 
     const model = await parseBpmn(deployment.xml);
     const process = executableProcess(model);
-    const state = JSON.parse(stored.json) as EngineState;
 
     // As políticas de falha não estão no EngineState (o motor não as
     // serializa, nem as devolve em getState()), então quem as lembra é a
@@ -281,7 +273,7 @@ export class EbbRuntime {
     // repassá-las a restore(), toda instância re-hidratada voltaria ao padrão
     // 'fail' de @bpmn-flow/core, e uma falha de worker derrubaria a instância
     // em vez de abrir incidente.
-    const [birth] = journal ?? (await this.store.journal(instanceId));
+    const [birth] = log;
     const engineOptions = parseStartEngineOptions(birth?.payload.engine);
 
     const engine = WorkflowEngine.restore(process, state, {
@@ -291,5 +283,19 @@ export class EbbRuntime {
       retry: engineOptions?.retry ?? { attempts: 0 },
     });
     return { instance, engine };
+  }
+
+  /**
+   * O deployment com que a instância nasceu, não o mais recente: um redeploy
+   * não troca o modelo debaixo de uma instância viva.
+   */
+  private async deploymentOf(instance: InstanceRecord): Promise<Deployment> {
+    const deployment = await this.store.read(instance.processKey, instance.version);
+    if (!deployment) {
+      throw new Error(
+        `A instância ${instance.id} aponta para ${instance.processKey} v${instance.version}, que não está publicado.`,
+      );
+    }
+    return deployment;
   }
 }
