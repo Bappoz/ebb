@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -224,6 +224,44 @@ const JOB = `<?xml version="1.0" encoding="UTF-8"?>
 </bpmn:definitions>`;
 
 const OK_SCRIPT = '#!/bin/sh\nread input\necho \'{"authorized":true}\'\n';
+
+describe('ebb console', () => {
+  it('sobe em loopback, responde a api e sai com 0 no SIGINT', async () => {
+    await ebb('deploy', 'pedido.bpmn');
+    await ebb('start', 'Pedido');
+
+    const child = spawn(process.execPath, [BIN, 'console', '--port', '0'], { cwd: dir });
+    let out = '';
+    const url = await new Promise<string>((resolve, reject) => {
+      child.stdout.on('data', (chunk: Buffer) => {
+        out += chunk.toString('utf8');
+        const match = /http:\/\/127\.0\.0\.1:\d+/.exec(out);
+        if (match) resolve(match[0]);
+      });
+      child.on('exit', (code) => reject(new Error(`saiu com ${code} antes de subir: ${out}`)));
+    });
+
+    const res = await fetch(`${url}/api/instances`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject([{ processKey: 'Pedido' }]);
+    const page = await fetch(`${url}/`);
+    expect(await page.text()).toContain('<title>ebb console</title>');
+
+    const code = await new Promise<number | null>((resolve) => {
+      child.on('exit', resolve);
+      child.kill('SIGINT');
+    });
+    expect(code).toBe(0);
+  }, 20_000);
+
+  it.each(['x', '-1', '1.5', '70000'])('recusa --port %s com erro de uso', async (port) => {
+    expect((await ebb('console', '--port', port)).code).toBe(2);
+  });
+
+  it('recusa --port sem valor com erro de uso', async () => {
+    expect((await ebb('console', '--port')).code).toBe(2);
+  });
+});
 
 describe('ebb worker (argumentos)', () => {
   it('sai com 2 quando falta o -- com o comando', async () => {

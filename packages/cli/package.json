@@ -25,6 +25,8 @@
   },
   "dependencies": {
     "@bpmn-flow/core": "file:../../../bpmn-flow/packages/core",
+    "@ebb/api": "^0.0.0",
+    "@ebb/console": "^0.0.0",
     "@ebb/runtime": "^0.0.0",
     "@ebb/store": "^0.0.0"
   }
