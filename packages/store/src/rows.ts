@@ -34,6 +34,11 @@ export function integer(row: Row, column: string): number {
   return fail(column, value ?? null, 'inteiro');
 }
 
+export function optionalInteger(row: Row, column: string): number | undefined {
+  const value = row[column];
+  return value === null || value === undefined ? undefined : integer(row, column);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

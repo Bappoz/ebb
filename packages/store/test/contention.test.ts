@@ -93,7 +93,9 @@ it('dois processos nunca recebem o mesmo job', async () => {
 
   const a = contender(path, barrier, 'w1');
   const b = contender(path, barrier, 'w2');
-  await Promise.all([a.ready, b.ready]);
+  // Um filho que morre antes do `ready` rejeita o `done`: a corrida faz o
+  // teste falhar na hora em vez de esperar o timeout.
+  await Promise.race([Promise.all([a.ready, b.ready]), Promise.all([a.done, b.done])]);
   await writeFile(barrier, '');
   const [gotA, gotB] = await Promise.all([a.done, b.done]);
 

@@ -226,3 +226,107 @@ describe('consulta de instância', () => {
     store.close();
   });
 });
+
+describe('bifurcação', () => {
+  async function withHistory(store: SqliteStore) {
+    await store.createInstance(creation('orig'));
+    for (const tokenId of ['t1', 't2']) {
+      await store.append({
+        instanceId: 'orig',
+        status: 'waiting',
+        command: { type: 'completeTask', payload: { tokenId }, at: 1_700_000_000_500 },
+        state: { engineVersion: 10, json: '{"version":10}' },
+        jobs: [],
+      });
+    }
+    return store.journal('orig');
+  }
+
+  const pick = ({
+    seq,
+    type,
+    payload,
+    at,
+  }: {
+    seq: number;
+    type: string;
+    payload: unknown;
+    at: number;
+  }) => ({
+    seq,
+    type,
+    payload,
+    at,
+  });
+
+  it('cria a instância nova com o journal cortado, o at original e a proveniência', async () => {
+    const store = await seeded(new SqliteStore({ path: ':memory:' }));
+    const journal = await withHistory(store);
+
+    const forked = await store.forkInstance({
+      id: 'fork',
+      from: 'orig',
+      at: 2,
+      status: 'waiting',
+      journal: journal.slice(0, 2),
+      state: { engineVersion: 10, json: '{"version":10,"forked":true}' },
+      jobs: [{ tokenId: 'j1', nodeId: 'Charge', type: 'charge', variables: {}, attempts: 0 }],
+    });
+
+    expect(forked).toMatchObject({
+      id: 'fork',
+      processKey: 'Pedido',
+      version: 1,
+      seq: 2,
+      forkedFrom: 'orig',
+      forkedAt: 2,
+    });
+    expect((await store.journal('fork')).map(pick)).toEqual(journal.slice(0, 2).map(pick));
+    expect(await store.readInstanceState('fork')).toMatchObject({ seq: 2 });
+    expect(await store.listJobs({ instanceId: 'fork' })).toMatchObject([
+      { tokenId: 'j1', state: 'pending' },
+    ]);
+    // A original não mudou.
+    expect(await store.journal('orig')).toHaveLength(3);
+    expect(await store.readInstance('orig')).not.toHaveProperty('forkedFrom');
+    store.close();
+  });
+
+  it('recusa journal que não é [1..at] contíguo', async () => {
+    const store = await seeded(new SqliteStore({ path: ':memory:' }));
+    const journal = await withHistory(store);
+    const input = {
+      id: 'fork',
+      from: 'orig',
+      at: 2,
+      status: 'waiting' as const,
+      state: { engineVersion: 10, json: '{}' },
+      jobs: [],
+    };
+
+    await expect(store.forkInstance({ ...input, journal: journal.slice(1, 3) })).rejects.toThrow(
+      /\[1\.\.2\]/,
+    );
+    await expect(store.forkInstance({ ...input, journal: journal.slice(0, 1) })).rejects.toThrow(
+      /\[1\.\.2\]/,
+    );
+    expect(await store.readInstance('fork')).toBeUndefined();
+    store.close();
+  });
+
+  it('recusa bifurcar de instância que não existe', async () => {
+    const store = await seeded(new SqliteStore({ path: ':memory:' }));
+    await expect(
+      store.forkInstance({
+        id: 'fork',
+        from: 'nada',
+        at: 1,
+        status: 'waiting',
+        journal: [],
+        state: { engineVersion: 10, json: '{}' },
+        jobs: [],
+      }),
+    ).rejects.toThrow(/nada/);
+    store.close();
+  });
+});

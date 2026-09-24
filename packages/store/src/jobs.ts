@@ -1,9 +1,5 @@
-import { integer, jsonObject, optionalText, text, type Row } from './rows.js';
+import { integer, jsonObject, optionalInteger, optionalText, text, type Row } from './rows.js';
 import type { JobRecord } from './types.js';
-
-function optionalInteger(row: Row, column: string): number | undefined {
-  return row[column] === null || row[column] === undefined ? undefined : integer(row, column);
-}
 
 /** Linha da tabela `jobs` como objeto, sem `as` em cima do SQLite. */
 export function toJob(row: Row): JobRecord {

@@ -1,4 +1,4 @@
-import { integer, jsonObject, text, type Row } from './rows.js';
+import { integer, jsonObject, optionalInteger, optionalText, text, type Row } from './rows.js';
 import type { InstanceRecord, InstanceStatus, JournalEntry, StoredEngineState } from './types.js';
 
 const STATUSES: readonly InstanceStatus[] = [
@@ -19,6 +19,8 @@ function status(row: Row): InstanceStatus {
 }
 
 export function toInstance(row: Row): InstanceRecord {
+  const forkedFrom = optionalText(row, 'forked_from');
+  const forkedAt = optionalInteger(row, 'forked_at');
   return {
     id: text(row, 'id'),
     processKey: text(row, 'process_key'),
@@ -27,6 +29,8 @@ export function toInstance(row: Row): InstanceRecord {
     seq: integer(row, 'seq'),
     createdAt: text(row, 'created_at'),
     updatedAt: text(row, 'updated_at'),
+    ...(forkedFrom === undefined ? {} : { forkedFrom }),
+    ...(forkedAt === undefined ? {} : { forkedAt }),
   };
 }
 

@@ -14,6 +14,7 @@ import type {
   DeployResult,
   Deployment,
   EngineStateInput,
+  ForkInstanceInput,
   InstanceRecord,
   JobProjection,
   JobRecord,
@@ -214,6 +215,45 @@ export class SqliteStore implements Store {
           .run(input.status, seq, this.now().toISOString(), input.instanceId);
         this.reconcileJobs(input.instanceId, input.jobs);
         return this.instanceRow(input.instanceId);
+      });
+    });
+  }
+
+  forkInstance(input: ForkInstanceInput): Promise<InstanceRecord> {
+    const at = this.now().toISOString();
+    return promised(() => {
+      const origin = this.instanceRow(input.from);
+      const contiguous =
+        input.journal.length === input.at &&
+        input.journal.every((entry, index) => entry.seq === index + 1);
+      if (!contiguous) {
+        throw new Error(`forkInstance: o journal tem de ser o [1..${input.at}] da original.`);
+      }
+      return transaction(this.db, () => {
+        this.db
+          .prepare(
+            `INSERT INTO instances (id, process_key, version, status, seq, created_at, updated_at,
+                                    forked_from, forked_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            input.id,
+            origin.processKey,
+            origin.version,
+            input.status,
+            input.at,
+            at,
+            at,
+            input.from,
+            input.at,
+          );
+        // `at` de cada entrada é o relógio do motor e vai intacto: é o que o
+        // replay da bifurcação reinjeta. `recorded_at` é de agora — a cópia
+        // aconteceu agora.
+        for (const entry of input.journal) this.writeJournal(input.id, entry.seq, entry);
+        this.writeEngineState(input.id, input.at, input.state);
+        this.reconcileJobs(input.id, input.jobs);
+        return this.instanceRow(input.id);
       });
     });
   }
