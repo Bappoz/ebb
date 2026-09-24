@@ -14,6 +14,7 @@ import {
 } from './instances.js';
 import { listIncidents, listJobs, resolveIncident, retryTask } from './jobs.js';
 import { resolveStorePath } from './paths.js';
+import { showStep } from './timeline.js';
 import { parseVars } from './vars.js';
 import { runWorker } from './worker.js';
 
@@ -28,6 +29,7 @@ Instâncias:
   ebb start <chave> [--version N]       instancia um processo publicado
   ebb ps                                as instâncias e o estado de cada uma
   ebb show <id>                         estado, variáveis e o que está pendente
+  ebb show <id> --at <n>                a instância depois do passo n, e o porquê de cada gateway
   ebb complete <id> <token>             conclui uma tarefa parada
   ebb signal <id> <nome>                entrega um evento ao diagrama
   ebb tick <id> [--at <iso>]            dispara os timers vencidos
@@ -46,7 +48,8 @@ Opções:
   --store <arquivo>   onde fica o banco (padrão: .ebb/ebb.db, ou $EBB_STORE)
   --force             publica mesmo com aviso de validação
   --var chave=valor   variável de processo; JSON quando parseia, texto quando não
-  --at <iso>          instante que o tick usa, em vez do relógio de parede
+  --at <iso>          (tick) instante que o tick usa, em vez do relógio de parede
+  --at <n>            (show, fork) o passo do journal, a partir de 1
   --retries N         tentativas automáticas antes de virar incidente (padrão: 0)
   --once              (worker) uma rodada e sai, em vez de laço
   --lease <ms>        (worker) por quanto tempo o job fica travado (padrão: 60000)
@@ -149,7 +152,12 @@ async function main(): Promise<number> {
       case 'show': {
         const id = argv[1];
         if (!id || id.startsWith('--')) return usageError('Informe o id da instância.');
-        const result = await showInstance(store, runtime, id);
+        const at = positiveInteger(argv, 'at');
+        if (at === INVALID) return usageError(invalidOption('at', option(argv, 'at')));
+        const result =
+          at === undefined
+            ? await showInstance(store, runtime, id)
+            : await showStep(store, runtime, id, at);
         console.log(result.output);
         return result.exitCode;
       }

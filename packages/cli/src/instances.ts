@@ -214,7 +214,7 @@ function describe(view: InstanceView): string {
   return lines.join('\n');
 }
 
-function pendingLines(tasks: InstanceView['tasks']): string[] {
+export function pendingLines(tasks: InstanceView['tasks']): string[] {
   if (tasks.length === 0) return [];
   return [
     table(
