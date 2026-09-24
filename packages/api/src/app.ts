@@ -47,6 +47,19 @@ export function createApp(options: AppOptions): Hono {
     c.json(await runtime.replay(c.req.param('id'))),
   );
 
+  app.post('/api/instances/:id/fork', async (c) => {
+    // Um formulário ou fetch "simples" de outra origem não consegue mandar
+    // este cabeçalho sem preflight, e preflight não é respondido aqui: é o
+    // que fecha CSRF sem auth.
+    const type = c.req.header('content-type') ?? '';
+    if (!/^application\/json\s*(;|$)/i.test(type)) {
+      return c.json({ error: 'Envie o corpo como application/json.' }, 415);
+    }
+    const seq = seqFrom(await c.req.text());
+    const forked = await runtime.fork(c.req.param('id'), seq);
+    return c.json({ instance: forked.instance }, 201);
+  });
+
   app.all('/api/*', (c) => c.json({ error: 'Rota desconhecida.' }, 404));
 
   app.notFound((c) => c.json({ error: 'Não encontrado.' }, 404));
@@ -62,4 +75,25 @@ export function createApp(options: AppOptions): Hono {
   });
 
   return app;
+}
+
+/**
+ * `{ seq }` do corpo, sem `as`: o corpo é texto de fora, e um `seq` que não é
+ * inteiro positivo não pode chegar ao runtime como se fosse.
+ */
+function seqFrom(raw: string): number {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new BadRequestError('O corpo tem de ser JSON válido.');
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new BadRequestError('O corpo tem de ser um objeto JSON.');
+  }
+  const seq: unknown = 'seq' in parsed ? parsed.seq : undefined;
+  if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) {
+    throw new BadRequestError('"seq" tem de ser um inteiro positivo.');
+  }
+  return seq;
 }

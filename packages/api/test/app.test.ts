@@ -134,3 +134,78 @@ describe('Host', () => {
     },
   );
 });
+
+function fork(id: string, body: string, contentType = 'application/json') {
+  return createApp({ store, runtime }).request(`/api/instances/${id}/fork`, {
+    method: 'POST',
+    headers: { 'content-type': contentType },
+    body,
+  });
+}
+
+describe('bifurcar', () => {
+  it('201 com a instância nova, parada no passo pedido', async () => {
+    await throughGateway();
+    const res = await fork('inst-1', JSON.stringify({ seq: 1 }));
+
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({
+      instance: { id: 'inst-2', seq: 1, forkedFrom: 'inst-1', forkedAt: 1 },
+    });
+  });
+
+  it('aceita charset no Content-Type', async () => {
+    await throughGateway();
+    const res = await fork('inst-1', JSON.stringify({ seq: 1 }), 'application/json; charset=utf-8');
+    expect(res.status).toBe(201);
+  });
+
+  it.each(['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data'])(
+    '415 sem Content-Type JSON (%s) e nada é criado',
+    async (contentType) => {
+      await throughGateway();
+      const res = await fork('inst-1', JSON.stringify({ seq: 1 }), contentType);
+
+      expect(res.status).toBe(415);
+      expect(await errorOf(res)).not.toBe('');
+      expect(await store.readInstance('inst-2')).toBeUndefined();
+    },
+  );
+
+  it.each([
+    ['seq zero', '{"seq":0}'],
+    ['seq fracionário', '{"seq":1.5}'],
+    ['seq como texto', '{"seq":"1"}'],
+    ['sem seq', '{}'],
+    ['JSON inválido', '{seq:'],
+    ['não é objeto', '[1]'],
+    ['corpo vazio', ''],
+  ])('400 para %s', async (_, body) => {
+    await throughGateway();
+    const res = await fork('inst-1', body);
+
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).not.toBe('');
+  });
+
+  it('400 com o intervalo quando o passo não existe', async () => {
+    await throughGateway();
+    const res = await fork('inst-1', JSON.stringify({ seq: 9 }));
+
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toContain('[1, 2]');
+  });
+
+  it('404 para instância que não existe', async () => {
+    const res = await fork('nada', JSON.stringify({ seq: 1 }));
+    expect(res.status).toBe(404);
+  });
+
+  it('GET na rota de bifurcar não bifurca', async () => {
+    await throughGateway();
+    const res = await createApp({ store, runtime }).request('/api/instances/inst-1/fork');
+
+    expect(res.status).toBe(404);
+    expect(await store.readInstance('inst-2')).toBeUndefined();
+  });
+});
