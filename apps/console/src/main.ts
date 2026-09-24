@@ -1,6 +1,7 @@
 import type { BpmnFlowViewer } from '@bpmn-flow/viewer';
 import type { ReplayView } from '@ebb/runtime';
 import { fetchInstances, fetchReplay, forkAt } from './api.js';
+import { lazy, serial } from './loading.js';
 import { clampStep, frameAt, listRows, parseRoute, routeTo, type Frame } from './timeline.js';
 import './style.css';
 
@@ -44,7 +45,18 @@ const prev = buttonById('prev');
 const next = buttonById('next');
 const forkButton = buttonById('fork');
 
-let viewer: BpmnFlowViewer | undefined;
+/** O viewer é um só: criado uma vez, mesmo com duas navegações pedindo juntas. */
+const viewer = lazy(async (): Promise<BpmnFlowViewer> => {
+  const { BpmnFlowViewer } = await import('./diagram-view.js');
+  return new BpmnFlowViewer({ container: byId('diagram') });
+});
+/**
+ * Os carregamentos do diagrama, um de cada vez e na ordem das navegações: o
+ * `load` do viewer é assíncrono (pode rodar auto-layout), e sem a fila um
+ * carregamento velho e lento terminaria por último, deixando o diagrama
+ * errado sob o painel certo.
+ */
+const loads = serial();
 /** O replay aberto, reaproveitado enquanto só o passo muda. */
 let current: ReplayView | undefined;
 /** O passo pintado agora. */
@@ -55,13 +67,6 @@ let shown = 0;
  * rápido pintaria o replay velho por cima do novo.
  */
 let navigation = 0;
-
-async function ensureViewer(): Promise<BpmnFlowViewer> {
-  if (viewer) return viewer;
-  const { BpmnFlowViewer } = await import('./diagram-view.js');
-  viewer = new BpmnFlowViewer({ container: byId('diagram') });
-  return viewer;
-}
 
 function showError(error: unknown): void {
   const back = el('a', 'voltar à lista');
@@ -170,18 +175,22 @@ function paint(target: BpmnFlowViewer, frame: Frame): void {
 
 async function showInstance(id: string, step: number | undefined, ticket: number): Promise<void> {
   if (current?.instance.id !== id) {
+    // A partir daqui o diagrama na tela deixa de ser o de `current`: esquecê-lo
+    // faz a volta à instância anterior recarregar em vez de pintar por cima do
+    // carregamento que está em curso, e desliga o "bifurcar" até terminar.
+    current = undefined;
     const view = await fetchReplay(id);
-    const target = await ensureViewer();
+    const target = await viewer();
     if (ticket !== navigation) return;
     // O diagrama precisa estar visível para o viewer medir o container.
     listView.hidden = true;
     debuggerView.hidden = false;
-    await target.load(view.xml);
+    await loads(() => target.load(view.xml));
     if (ticket !== navigation) return;
     current = view;
   }
   const view = current;
-  const target = await ensureViewer();
+  const target = await viewer();
   if (ticket !== navigation || !view) return;
 
   const n = clampStep(step, view.steps.length);
