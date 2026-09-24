@@ -215,6 +215,35 @@ describe('EbbRuntime.inspect', () => {
     store.close();
   });
 
+  it.each([
+    ['sem processo', '{"version":10,"tokens":[],"history":[]}'],
+    ['versão do JSON divergente da coluna', '{"version":9,"tokens":[],"history":[]}'],
+  ])(
+    'reconstrói pelo journal quando o snapshot passa na guarda mas o restore o recusa (%s)',
+    async (_, json) => {
+      const { store, runtime } = await fixture();
+      const started = await runtime.start('Pedido', { variables: { total: 42 } });
+      await store.append({
+        instanceId: 'inst-1',
+        status: 'waiting',
+        command: { type: 'tick', payload: {}, at: AT },
+        state: { engineVersion: ENGINE_STATE_VERSION, json },
+        jobs: [],
+      });
+
+      expect((await runtime.inspect('inst-1')).tasks.map((task) => task.nodeId)).toEqual([
+        'Separar',
+      ]);
+      const [task] = started.tasks;
+      const done = await runtime.apply('inst-1', {
+        type: 'completeTask',
+        tokenId: task?.tokenId ?? '',
+      });
+      expect(done.snapshot.status).toBe('completed');
+      store.close();
+    },
+  );
+
   it('reconstrói pelo journal quando o snapshot tem a versão certa e a forma errada', async () => {
     const { store, runtime } = await fixture();
     await runtime.start('Pedido', { variables: { total: 42 } });

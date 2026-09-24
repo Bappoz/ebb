@@ -5,7 +5,7 @@ import {
   parseBpmn,
   WorkflowEngine,
 } from '@bpmn-flow/core';
-import type { ExecutionSnapshot, IncidentState, PendingTask } from '@bpmn-flow/core';
+import type { EngineState, ExecutionSnapshot, IncidentState, PendingTask } from '@bpmn-flow/core';
 import type { Deployment, InstanceRecord, JobRecord, JournalEntry, Store } from '@ebb/store';
 import {
   applyCommand,
@@ -313,14 +313,6 @@ export class EbbRuntime {
 
     const deployment = await this.deploymentOf(instance);
     const log = journal ?? (await this.store.journal(instanceId));
-    const stored = await this.store.readInstanceState(instanceId);
-    // Snapshot é cache: versão de motor diferente, forma inválida ou ausência
-    // não tornam a instância ilegível, só mais cara — reconstrói pelo journal.
-    // Quem regrava na versão atual é o próximo `apply`; ler não escreve.
-    const cached =
-      stored?.engineVersion === ENGINE_STATE_VERSION ? parseEngineState(stored.json) : undefined;
-    const state = cached ?? (await replayJournal(deployment.xml, log)).engine.getState();
-
     const model = await parseBpmn(deployment.xml);
     const process = executableProcess(model);
 
@@ -332,13 +324,32 @@ export class EbbRuntime {
     // em vez de abrir incidente.
     const [birth] = log;
     const engineOptions = parseStartEngineOptions(birth?.payload.engine);
+    const restore = (state: EngineState) =>
+      WorkflowEngine.restore(process, state, {
+        processes: model.processes,
+        now: () => at,
+        onHandlerError: engineOptions?.onHandlerError ?? 'incident',
+        retry: engineOptions?.retry ?? { attempts: 0 },
+      });
 
-    const engine = WorkflowEngine.restore(process, state, {
-      processes: model.processes,
-      now: () => at,
-      onHandlerError: engineOptions?.onHandlerError ?? 'incident',
-      retry: engineOptions?.retry ?? { attempts: 0 },
-    });
+    // Snapshot é cache: versão de motor diferente, forma inválida, ausência
+    // ou um estado que o próprio restore() recusa não tornam a instância
+    // ilegível, só mais cara — reconstrói pelo journal. Quem regrava na versão
+    // atual é o próximo `apply`; ler não escreve.
+    const stored = await this.store.readInstanceState(instanceId);
+    const cached =
+      stored?.engineVersion === ENGINE_STATE_VERSION ? parseEngineState(stored.json) : undefined;
+    let engine: WorkflowEngine | undefined;
+    if (cached) {
+      try {
+        engine = restore(cached);
+      } catch {
+        // A guarda é mínima de propósito; o que ela deixa passar e o motor
+        // recusa é cache ruim como qualquer outro. O journal decide abaixo.
+        engine = undefined;
+      }
+    }
+    engine ??= restore((await replayJournal(deployment.xml, log)).engine.getState());
     return { instance, engine };
   }
 

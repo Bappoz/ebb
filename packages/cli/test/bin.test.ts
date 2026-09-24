@@ -184,6 +184,16 @@ describe('ebb (binário construído)', () => {
     expect(forked.stdout).toContain('bifurcada');
   });
 
+  it('show --at sem valor é erro de uso, não o estado atual em silêncio', async () => {
+    await ebb('deploy', 'pedido.bpmn');
+    const started = await ebb('start', 'Pedido');
+    const id = started.stdout.match(/instância (\S+)/)?.[1] ?? '';
+
+    const show = await ebb('show', id, '--at');
+    expect(show.code).toBe(2);
+    expect(show.stdout).toContain('--at');
+  });
+
   it('sai com 2 quando --at é malformado', async () => {
     await ebb('deploy', 'pedido.bpmn');
     const started = await ebb('start', 'Pedido');

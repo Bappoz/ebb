@@ -153,6 +153,11 @@ async function main(): Promise<number> {
       case 'show': {
         const id = argv[1];
         if (!id || id.startsWith('--')) return usageError('Informe o id da instância.');
+        // `--at` sem valor não pode cair no estado atual: é justamente quem
+        // queria um passo e receberia outro sem aviso.
+        if (argv.includes('--at') && option(argv, 'at') === undefined) {
+          return usageError(invalidOption('at', undefined));
+        }
         const at = positiveInteger(argv, 'at');
         if (at === INVALID) return usageError(invalidOption('at', option(argv, 'at')));
         const result =
