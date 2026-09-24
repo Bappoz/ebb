@@ -18,7 +18,7 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build -w @ebb/store && npm run build -w @ebb/runtime && npm run build -w @ebb/cli",
+    "build": "npm run build -w @ebb/store && npm run build -w @ebb/runtime && npm run build -w @ebb/api && npm run build -w @ebb/cli",
     "prepare": "npm run build",
     "verify": "npm run build && npm run format:check && npm run lint && npm run typecheck && npm run coverage",
     "typecheck": "npm run typecheck --workspaces --if-present",

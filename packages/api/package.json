@@ -1,0 +1,29 @@
+{
+  "name": "@ebb/api",
+  "version": "0.0.0",
+  "description": "ebb over HTTP: the routes the console and, later, workers and the SDK talk to.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.lint.json"
+  },
+  "dependencies": {
+    "@ebb/runtime": "^0.0.0",
+    "@ebb/store": "^0.0.0",
+    "@hono/node-server": "^2.1.1",
+    "hono": "^4.13.8"
+  }
+}
