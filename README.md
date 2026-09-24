@@ -67,6 +67,8 @@ ebb ps                              # o que está rodando
 ebb show <id>                       # estado, variáveis, pendências
 ebb complete <id> <token>           # conclui a tarefa parada
 ebb journal <id>                    # os comandos aplicados, em ordem
+ebb show <id> --at 2                # a instância depois do passo 2, e o porquê de cada gateway
+ebb fork <id> --at 1                # instância nova a partir do passo 1; a original não muda
 ```
 
 Mate o processo entre um comando e outro: o estado está no `.ebb/ebb.db`, e a
@@ -74,6 +76,29 @@ próxima invocação continua de onde a anterior parou.
 
 O banco fica em `.ebb/ebb.db`, relativo ao diretório de trabalho — como
 `node_modules/`, é do projeto. Mude com `--store` ou `EBB_STORE`.
+
+### Rebobinar e bifurcar
+
+O snapshot no banco é só um atalho: qualquer passo de qualquer instância se
+reconstrói a partir do journal. `show --at` mostra a instância como estava
+depois daquele comando e, para cada gateway, a condição que decidiu e as
+variáveis daquele instante:
+
+```
+passo 2 de 2 — completeTask em 2026-09-24T16:09:12.663Z
+{"tokenId":"t1","output":{"valor":150}}
+
+entrou em: Gateway_Valor, Diretoria
+
+GATEWAY
+Gateway_Valor: "valor > 100" → Flow_Alto (valor=150)
+```
+
+`fork --at` cria uma instância nova parada naquele passo, com o journal
+copiado até ali, e a original fica intacta. O valor diferente entra pelo
+comando de sempre (`ebb complete <novo> t1 --var valor=50`). A bifurcação é
+viva: um job pendente no passo do corte volta para a fila, e um worker o
+executa.
 
 ### Workers: a service task fora do processo
 

@@ -4,18 +4,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { checksumOf } from '../src/checksum.js';
 import { toJob } from '../src/jobs.js';
-import { integer } from '../src/rows.js';
 import { SqliteStore } from '../src/sqlite.js';
 import type { AppendInput, InstanceRecord, JobProjection } from '../src/types.js';
-
-/** Expõe `PRAGMA busy_timeout` da conexão — só para o teste de regressão do finding 1. */
-class InspectableStore extends SqliteStore {
-  busyTimeoutMs(): number {
-    const row = this.db.prepare('PRAGMA busy_timeout').get();
-    if (!row) throw new Error('PRAGMA busy_timeout não devolveu linha.');
-    return integer(row, 'timeout');
-  }
-}
 
 const XML = '<definitions><process id="Pedido" /></definitions>';
 const VARS = { pedido: 42 };
@@ -104,6 +94,34 @@ describe('jobs', () => {
 
     expect(locked).toMatchObject({ state: 'locked', worker: 'w1', lockedUntil: 5_000 });
     expect(await store.listJobs()).toMatchObject([{ state: 'locked', worker: 'w1' }]);
+  });
+
+  it('a reconciliação não toca updated_at de um job que não mudou', async () => {
+    let clock = Date.parse('2026-01-01T00:00:00.000Z');
+    const timed = new SqliteStore({ path: join(dir, 'timed.db'), now: () => new Date(clock) });
+    await timed.deploy({ processKey: 'Pedido', xml: XML, checksum: checksumOf(XML) });
+    await timed.createInstance({
+      id: 'i1',
+      processKey: 'Pedido',
+      version: 1,
+      status: 'waiting',
+      command: CMD,
+      state: STATE,
+      jobs: [projection('t1')],
+    });
+    const [before] = await timed.listJobs();
+
+    clock += 60_000;
+    await timed.append(appendOf({ instanceId: 'i1', jobs: [projection('t1')] }));
+    const [unchanged] = await timed.listJobs();
+
+    clock += 60_000;
+    await timed.append(appendOf({ instanceId: 'i1', jobs: [projection('t1', 1)] }));
+    const [changed] = await timed.listJobs();
+    timed.close();
+
+    expect(unchanged?.updatedAt).toBe(before?.updatedAt);
+    expect(changed?.updatedAt).toBe('2026-01-01T00:02:00.000Z');
   });
 
   it('a reconciliação atualiza node_id e type de um job que sobrevive', async () => {
@@ -229,7 +247,7 @@ describe('mapeamento de linha do banco', () => {
 
 describe('busy timeout', () => {
   it('usa 5000ms por padrão', () => {
-    const s = new InspectableStore({ path: join(dir, 'busy-default.db') });
+    const s = new SqliteStore({ path: join(dir, 'busy-default.db') });
     try {
       expect(s.busyTimeoutMs()).toBe(5_000);
     } finally {
@@ -238,7 +256,7 @@ describe('busy timeout', () => {
   });
 
   it('aceita um valor customizado via busyTimeoutMs', () => {
-    const s = new InspectableStore({ path: join(dir, 'busy-custom.db'), busyTimeoutMs: 1_234 });
+    const s = new SqliteStore({ path: join(dir, 'busy-custom.db'), busyTimeoutMs: 1_234 });
     try {
       expect(s.busyTimeoutMs()).toBe(1_234);
     } finally {

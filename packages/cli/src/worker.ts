@@ -77,6 +77,15 @@ function readOutcome(code: number, stdout: string, stderr: string): Outcome {
   return { output: Object.keys(parsed).length > 0 ? parsed : undefined };
 }
 
+/**
+ * Decodifica a saída de um filho. Juntar os bytes antes de decodificar é o
+ * ponto: um pipe corta onde quer, inclusive no meio de um caractere
+ * multibyte, e decodificar pedaço a pedaço viraria `�`.
+ */
+export function decodeUtf8(chunks: Buffer[]): string {
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 /** Roda o comando para um job, com o job no stdin. */
 function runOnce(command: string[], job: JobRecord): Promise<Outcome> {
   const [bin, ...args] = command;
@@ -88,8 +97,8 @@ function runOnce(command: string[], job: JobRecord): Promise<Outcome> {
     child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
     child.on('error', (error) => resolve({ error: { message: error.message } }));
     child.on('close', (code) => {
-      const stdout = Buffer.concat(stdoutChunks).toString('utf8');
-      const stderr = Buffer.concat(stderrChunks).toString('utf8');
+      const stdout = decodeUtf8(stdoutChunks);
+      const stderr = decodeUtf8(stderrChunks);
       resolve(readOutcome(code ?? 0, stdout, stderr));
     });
     // Um filho que sai sem drenar o stdin (o `BOOM` do teste, ou qualquer

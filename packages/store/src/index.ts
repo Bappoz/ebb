@@ -10,6 +10,7 @@ export type {
   DeployInput,
   DeployResult,
   EngineStateInput,
+  ForkInstanceInput,
   InstanceRecord,
   InstanceStatus,
   JobProjection,

@@ -9,41 +9,27 @@
 
 ## Onde estamos
 
-Chunks 0-2 entregues: deploy versionado, runtime durável com journal, workers
-em outro processo com retry e incidente. `npm run verify` verde nos dois repos.
-PR do `bpmn-flow` (#58, `feat/external-jobs`) aberto, ainda não mergeado — o
-ebb consome por dependência de caminho, então isso não bloqueia nada aqui.
-Branch do ebb: `feat/workers-and-jobs`, não mergeada em `master`.
+Chunks 0-2 mergeados em `master` (PRs #1 e #2). PR #58 do `bpmn-flow`
+mergeado. **Chunk 3a (replay e bifurcação) entregue** na branch
+`feat/replay-and-fork`: spec em
+`docs/superpowers/specs/2026-09-24-ebb-chunk-3a-replay-fork.md`, plano ao lado,
+`npm run verify` verde. O próximo passo é o **3b** (`apps/console`, abaixo na
+Seção 1).
 
-As regras que os chunks 1-2 fixaram (relógio congelado por comando, versão
+As regras que os chunks 1-3a fixaram (relógio congelado por comando, versão
 congelada na instância, journal+snapshot atômicos, job é decisão do diagrama,
 `onHandlerError`/`retry` journalados fora do `EngineState`, reporte≠contabilidade
-de incidente, `jobs` como índice reconciliado com lease fenced) continuam
-valendo e não estão repetidas aqui — ver `git log` do chunk 2 ou os commits
-`94b2b3e..08feed4` para o raciocínio de cada uma.
+de incidente, `jobs` como índice reconciliado com lease fenced, snapshot é cache
+que o journal reconstrói, bifurcação é viva) continuam valendo — ver os commits
+de cada chunk para o raciocínio.
 
-## Dívida técnica do chunk 2 (resolver antes ou junto da seção 1)
+## Dívida técnica que sobrou
 
-- **Segurança do lease sob contenção real não tem teste.** `node:sqlite` é
-  síncrono, então dois `SqliteStore` no mesmo processo nunca se sobrepõem — só
-  processos reais provam isso, e o teste que existe (`bin.test.ts`) é rede de
-  regressão, não prova de contenção. Precisa de ponto de sincronização
-  controlado (ex.: um dos dois processos aguarda um sinal antes de chamar
-  `lockJobs`).
-- **`packages/*/test/` fica fora do `tsc --noEmit`** (cada tsconfig inclui só
-  `src/`). Mordeu quatro vezes no chunk 2 — campo obrigatório novo não aponta
-  chamador em teste, quebra em runtime. Criar `tsconfig.test.json` por pacote
-  e rodar `tsc --noEmit -p tsconfig.test.json` no `verify`.
-- `JSON.parse(stored.json) as EngineState` em `runtime.ts` (`hydrate`) — mesmo
-  `as` proibido que o guarda de `onHandlerError`/`retry` evita quatro linhas
-  abaixo. Escrever o guard.
-- `SqliteStore.db` virou `protected` só para um teste ler o busy_timeout;
-  trocar por um acessor dedicado (`busyTimeoutMs()`).
-- Decode UTF-8 do `ebb worker` (`Buffer.concat` antes de `toString`) sem teste
-  — dá para testar a função pura sem processo.
-- `reconcileJobs` atualiza `updated_at` em todo comando, mesmo sem mudança.
-- `activity.end` sem `activity.start` quando worker devolve `BpmnError` (o
-  park de job não emite `start`) — no `bpmn-flow/core`.
+A dívida do chunk 2 foi paga no 3a: typecheck de teste, guarda do
+`EngineState`, `db` privado, decode UTF-8, `updated_at` só quando muda,
+contenção do lease com dois processos reais e o `activity.end` órfão (este no
+`bpmn-flow`, branch `fix/job-error-activity-end`). Ficam:
+
 - `ebb incidents` re-hidrata cada instância (O(n)); projetar incidente como se
   projeta job resolveria, mas só vale a pena se alguém sentir a dor.
 - **Resolução de prefixo de id mora no CLI** (`withInstance`), já com dois
@@ -52,6 +38,8 @@ valendo e não estão repetidas aqui — ver `git log` do chunk 2 ou os commits
 - Sem timeout de processo filho no `ebb worker` — decisão deliberada, mas um
   filho que vaza o fd do stdout para um neto trava o worker (o lease ainda
   devolve o job).
+- `replayJournal` é O(n) por chamada e cada passo carrega a `history`
+  acumulada (O(n²) de memória). Remédio conhecido: history só no último passo.
 
 ---
 
@@ -60,35 +48,25 @@ valendo e não estão repetidas aqui — ver `git log` do chunk 2 ou os commits
 > Termina quando: rebobinar uma instância no navegador e andar passo a passo
 > no diagrama, vendo variáveis e o caminho tomado em cada gateway.
 
-O que já está pronto para isto: todo comando é dado passando por
-`applyCommand`, incluindo `completeJob`/`failJob`; erro de worker vira
-`{ message, code? }` no payload, não um `Error` (que não sobrevive a
-`JSON.stringify`). O journal (`instance_journal`) já guarda `[tipo, payload,
-at]` de cada comando, em ordem.
+Fatiada em dois ciclos. **3a feito**: `replayJournal` puro, `EbbRuntime.replay`
+e `fork`, `ebb show --at` e `ebb fork --at`, snapshot como cache (versão de
+motor nova ou snapshot inválido reconstroem pelo journal, e o próximo comando
+regrava). A razão do gateway saiu **sem mudar o motor**: um `decide` que só
+registra e devolve `undefined`. Isso fecha a pendência de "evento de condição
+avaliada" do design geral. Event-based gateway fica de fora, porque ali a razão
+é o próprio comando.
 
-Trabalho:
+**3b (próximo)**: `apps/console` com `@bpmn-flow/viewer` e slider de passo.
+O que já está pronto para ele:
 
-1. **Replay puro**: função que recebe `deployment.xml` + `journal[0..n]` e
-   devolve um motor no estado do passo `n`, sem tocar o store (útil para
-   `@ebb/testing` na seção 2 também). É basicamente repetir o que `hydrate` já
-   faz, mas parando num `seq` arbitrário em vez do último.
-2. **API de leitura**: `EbbRuntime.replay(instanceId, seq)` devolvendo
-   snapshot + o comando que produziu aquele passo + a razão de cada decisão de
-   gateway (o design aponta que isso ainda não é gravado — `flow.take` é
-   reconstruído, não é evento — decidir se vale gravar agora ou adiar).
-3. **`ebb show <id> --at <seq>`** no CLI, antes de qualquer UI — prova o
-   replay funciona sem esperar frontend.
-4. **`apps/console`** (ainda não existe like pacote): visualização com
-   `@bpmn-flow/viewer`, um slider de passo, e destaque do nó ativo. Ver se dá
-   para reusar `@bpmn-flow/viewer` sem fork.
-5. **Bifurcar**: replay até o passo N + `apply` com variáveis diferentes cria
-   uma instância nova (não sobrescreve o journal original — journal é
-   imutável, isso é regra de design, não decisão aberta).
-
-Achados a verificar antes de começar: `ENGINE_STATE_VERSION` bump invalida
-snapshot mas não journal — o replay a partir do zero é o que sobra quando isso
-acontece; vale um teste que simula um bump e confirma que o replay ainda
-funciona mesmo com o snapshot inutilizável.
+- `EbbRuntime.replay(id)` devolve `{ instance, xml, steps }` numa chamada: o
+  XML da versão congelada para `viewer.load(xml)` e, por passo, `snapshot`
+  para `applySnapshot`, `flows` para `markFlowTaken` e `decisions` para o
+  painel de "por quê".
+- `EbbRuntime.fork(id, seq, command?)` aceita o comando junto, para o botão
+  "seguir daqui com outros valores".
+- Falta decidir o transporte: o `@ebb/api` (Hono) é da seção 3. O 3b escolhe o
+  mínimo para servir o console e diz por quê.
 
 ---
 

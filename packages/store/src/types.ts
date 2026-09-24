@@ -71,6 +71,10 @@ export interface InstanceRecord {
   seq: number;
   createdAt: string;
   updatedAt: string;
+  /** A instância de onde esta foi bifurcada, quando foi. */
+  forkedFrom?: string;
+  /** O `seq` da original em que o corte foi feito. */
+  forkedAt?: number;
 }
 
 /** Um comando aplicado a uma instância, como o journal o guarda. */
@@ -159,6 +163,18 @@ export interface AppendInput {
   jobs: JobProjection[];
 }
 
+export interface ForkInstanceInput {
+  id: string;
+  from: string;
+  /** O `seq` de corte: o journal novo é o `[1..at]` da original. */
+  at: number;
+  status: InstanceStatus;
+  /** As entradas `[1..at]` como lidas da original — `at` e payload intactos. */
+  journal: JournalEntry[];
+  state: EngineStateInput;
+  jobs: JobProjection[];
+}
+
 /**
  * O contrato de persistência.
  *
@@ -192,6 +208,13 @@ export interface Store {
    * e a linha da instância — numa transação só.
    */
   append(input: AppendInput): Promise<InstanceRecord>;
+
+  /**
+   * Cria uma instância a partir do passo `at` de outra: a linha nova, a cópia
+   * do journal até ali e o estado reconstruído — numa transação só. A
+   * original não é tocada: journal é imutável.
+   */
+  forkInstance(input: ForkInstanceInput): Promise<InstanceRecord>;
 
   readInstance(id: string): Promise<InstanceRecord | undefined>;
 

@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SqliteStore } from '../src/sqlite.js';
 import { checksumOf } from '../src/checksum.js';
-import { SCHEMA_VERSION } from '../src/migrations.js';
+import { MIGRATIONS, SCHEMA_VERSION } from '../src/migrations.js';
 
 const XML_V1 = '<definitions><process id="Pedido" /></definitions>';
 const XML_V2 = '<definitions><process id="Pedido" name="Pedido" /></definitions>';
@@ -163,11 +163,34 @@ describe('SqliteStore', () => {
       .map((row) => row.name);
     raw.close();
 
-    expect(SCHEMA_VERSION).toBe(3);
+    expect(SCHEMA_VERSION).toBe(4);
     expect(tables).toContain('instances');
     expect(tables).toContain('instance_journal');
     expect(tables).toContain('instance_state');
     expect(tables).toContain('jobs');
+  });
+
+  it('migra um banco no esquema 3 com instâncias sem perder nada', async () => {
+    const path = join(dir, 'v3.db');
+    const raw = new DatabaseSync(path);
+    // Aplica só até a 3, como um ebb do chunk 2 teria deixado o arquivo.
+    raw.exec(
+      'CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)',
+    );
+    for (const migration of MIGRATIONS.filter((m) => m.version <= 3)) {
+      raw.exec(migration.up);
+      raw.prepare('INSERT INTO schema_migrations VALUES (?, ?)').run(migration.version, 'x');
+    }
+    raw.exec(`INSERT INTO deployments VALUES ('Pedido', 1, NULL, '<x/>', 'c', NULL, 'x')`);
+    raw.exec(`INSERT INTO instances VALUES ('i1', 'Pedido', 1, 'waiting', 1, 'x', 'x')`);
+    raw.close();
+
+    const store = new SqliteStore({ path });
+    const instance = await store.readInstance('i1');
+    store.close();
+
+    expect(instance).toMatchObject({ id: 'i1', status: 'waiting' });
+    expect(instance).not.toHaveProperty('forkedFrom');
   });
 });
 

@@ -5,13 +5,13 @@ import { transaction } from './tx.js';
  * Uma migração de esquema. São aplicadas em ordem e registradas, para que um
  * banco criado por uma versão antiga do ebb continue abrindo.
  */
-interface Migration {
+export interface Migration {
   version: number;
   name: string;
   up: string;
 }
 
-const MIGRATIONS: Migration[] = [
+export const MIGRATIONS: Migration[] = [
   {
     version: 1,
     name: 'deployments',
@@ -94,6 +94,17 @@ const MIGRATIONS: Migration[] = [
         FOREIGN KEY (instance_id) REFERENCES instances (id) ON DELETE CASCADE
       );
       CREATE INDEX jobs_pending ON jobs (type, state, locked_until);
+    `,
+  },
+  // Proveniência de bifurcação. Sem FOREIGN KEY em `forked_from` de
+  // propósito: apagar a original não pode apagar nem travar as bifurcações,
+  // que carregam journal próprio e completo.
+  {
+    version: 4,
+    name: 'fork provenance',
+    up: `
+      ALTER TABLE instances ADD COLUMN forked_from TEXT;
+      ALTER TABLE instances ADD COLUMN forked_at   INTEGER;
     `,
   },
 ];

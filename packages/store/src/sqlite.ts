@@ -14,6 +14,7 @@ import type {
   DeployResult,
   Deployment,
   EngineStateInput,
+  ForkInstanceInput,
   InstanceRecord,
   JobProjection,
   JobRecord,
@@ -97,13 +98,7 @@ export interface SqliteStoreOptions {
  * entra implementando {@link Store}, quando existir mais de um nó.
  */
 export class SqliteStore implements Store {
-  /**
-   * `protected`, não `private`: é o seam que o teste de atomicidade
-   * (`instances.test.ts`) e o de `busy_timeout` (`jobs.test.ts`) usam para
-   * inspecionar a conexão de dentro de uma subclasse, sem expor nada no
-   * contrato {@link Store}.
-   */
-  protected readonly db: DatabaseSync;
+  private readonly db: DatabaseSync;
   private readonly now: () => Date;
 
   constructor(options: SqliteStoreOptions) {
@@ -220,6 +215,45 @@ export class SqliteStore implements Store {
           .run(input.status, seq, this.now().toISOString(), input.instanceId);
         this.reconcileJobs(input.instanceId, input.jobs);
         return this.instanceRow(input.instanceId);
+      });
+    });
+  }
+
+  forkInstance(input: ForkInstanceInput): Promise<InstanceRecord> {
+    const at = this.now().toISOString();
+    return promised(() => {
+      const origin = this.instanceRow(input.from);
+      const contiguous =
+        input.journal.length === input.at &&
+        input.journal.every((entry, index) => entry.seq === index + 1);
+      if (!contiguous) {
+        throw new Error(`forkInstance: o journal tem de ser o [1..${input.at}] da original.`);
+      }
+      return transaction(this.db, () => {
+        this.db
+          .prepare(
+            `INSERT INTO instances (id, process_key, version, status, seq, created_at, updated_at,
+                                    forked_from, forked_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            input.id,
+            origin.processKey,
+            origin.version,
+            input.status,
+            input.at,
+            at,
+            at,
+            input.from,
+            input.at,
+          );
+        // `at` de cada entrada é o relógio do motor e vai intacto: é o que o
+        // replay da bifurcação reinjeta. `recorded_at` é de agora — a cópia
+        // aconteceu agora.
+        for (const entry of input.journal) this.writeJournal(input.id, entry.seq, entry);
+        this.writeEngineState(input.id, input.at, input.state);
+        this.reconcileJobs(input.id, input.jobs);
+        return this.instanceRow(input.id);
       });
     });
   }
@@ -343,6 +377,16 @@ export class SqliteStore implements Store {
   }
 
   /**
+   * O `busy_timeout` efetivo da conexão, em ms. Público para o teste conferir
+   * que a opção chegou ao SQLite, sem abrir a conexão inteira a subclasses.
+   */
+  busyTimeoutMs(): number {
+    const row = this.db.prepare('PRAGMA busy_timeout').get();
+    if (!row) throw new Error('PRAGMA busy_timeout não devolveu linha.');
+    return integer(row, 'timeout');
+  }
+
+  /**
    * A escrita do snapshot, separada por ser o passo que o teste de atomicidade
    * faz falhar: o journal já foi escrito quando ela roda, e é isso que a
    * transação tem de desfazer.
@@ -396,13 +440,18 @@ export class SqliteStore implements Store {
         }`,
       )
       .run(instanceId, ...keep);
+    // O WHERE do upsert faz um job que sobreviveu intacto não ser reescrito:
+    // sem ele, todo comando tocava `updated_at` de todos os jobs da
+    // instância, e a coluna deixava de dizer quando o job mudou.
     const upsert = this.db.prepare(
       `INSERT INTO jobs (instance_id, token_id, node_id, type, variables, state,
                          attempts, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
        ON CONFLICT (instance_id, token_id) DO UPDATE SET
          node_id = excluded.node_id, type = excluded.type,
-         variables = excluded.variables, attempts = excluded.attempts, updated_at = excluded.updated_at`,
+         variables = excluded.variables, attempts = excluded.attempts, updated_at = excluded.updated_at
+       WHERE jobs.node_id IS NOT excluded.node_id OR jobs.type IS NOT excluded.type
+          OR jobs.variables IS NOT excluded.variables OR jobs.attempts IS NOT excluded.attempts`,
     );
     for (const job of jobs) {
       upsert.run(

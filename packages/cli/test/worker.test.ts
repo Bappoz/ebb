@@ -4,7 +4,7 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { runWorker } from '../src/worker.js';
+import { decodeUtf8, runWorker } from '../src/worker.js';
 
 const EXTERNAL_JOB = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -248,5 +248,17 @@ describe('runWorker', () => {
     await runWorker(runtime, { type: 'charge', command: [script], once: true });
 
     expect(process.listenerCount('SIGINT')).toBe(before);
+  });
+});
+
+describe('decodeUtf8', () => {
+  it('junta os pedaços antes de decodificar um caractere partido ao meio', () => {
+    const bytes = Buffer.from('{"nome":"ação ✓"}', 'utf8');
+    // O "ç" são dois bytes; cortar entre eles é o que um pipe faz quando quer.
+    const cut = bytes.indexOf(0xc3) + 1;
+    const chunks = [bytes.subarray(0, cut), bytes.subarray(cut)];
+
+    expect(chunks.map((chunk) => chunk.toString('utf8')).join('')).not.toBe('{"nome":"ação ✓"}');
+    expect(decodeUtf8(chunks)).toBe('{"nome":"ação ✓"}');
   });
 });
