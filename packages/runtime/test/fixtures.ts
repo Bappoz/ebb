@@ -52,3 +52,45 @@ export const JOB_WITH_BOUNDARY = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:process>
   <bpmn:error id="Declined" name="Declined" errorCode="DECLINED" />
 </bpmn:definitions>`;
+
+/** Gateway exclusivo com condição e default: o caso de "por que foi por ali". */
+export const GATEWAY = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  targetNamespace="http://ebb.test" id="Defs">
+  <bpmn:process id="Aprovacao" isExecutable="true">
+    <bpmn:startEvent id="Start" />
+    <bpmn:userTask id="Avaliar" name="Avaliar pedido" />
+    <bpmn:exclusiveGateway id="Gateway_Valor" name="Valor alto?" default="Flow_Baixo" />
+    <bpmn:userTask id="Diretoria" name="Aprovar na diretoria" />
+    <bpmn:endEvent id="EndAlto" />
+    <bpmn:endEvent id="EndBaixo" />
+    <bpmn:sequenceFlow id="f0" sourceRef="Start" targetRef="Avaliar" />
+    <bpmn:sequenceFlow id="f1" sourceRef="Avaliar" targetRef="Gateway_Valor" />
+    <bpmn:sequenceFlow id="Flow_Alto" sourceRef="Gateway_Valor" targetRef="Diretoria">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">valor &gt; 100</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Baixo" sourceRef="Gateway_Valor" targetRef="EndBaixo" />
+    <bpmn:sequenceFlow id="f4" sourceRef="Diretoria" targetRef="EndAlto" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
+/** Timer intermediário: exercita o relógio mutável do replay. */
+export const TIMER = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  targetNamespace="http://ebb.test" id="Defs">
+  <bpmn:process id="Espera" isExecutable="true">
+    <bpmn:startEvent id="Start" />
+    <bpmn:intermediateCatchEvent id="Aguardar">
+      <bpmn:timerEventDefinition>
+        <bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT1H</bpmn:timeDuration>
+      </bpmn:timerEventDefinition>
+    </bpmn:intermediateCatchEvent>
+    <bpmn:userTask id="Conferir" />
+    <bpmn:endEvent id="End" />
+    <bpmn:sequenceFlow id="f0" sourceRef="Start" targetRef="Aguardar" />
+    <bpmn:sequenceFlow id="f1" sourceRef="Aguardar" targetRef="Conferir" />
+    <bpmn:sequenceFlow id="f2" sourceRef="Conferir" targetRef="End" />
+  </bpmn:process>
+</bpmn:definitions>`;

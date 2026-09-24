@@ -9,6 +9,7 @@ import type { EngineState, ExecutionSnapshot, IncidentState, PendingTask } from 
 import type { InstanceRecord, JobRecord, JournalEntry, Store } from '@ebb/store';
 import {
   applyCommand,
+  parseStartEngineOptions,
   payloadOf,
   type InstanceCommand,
   type StartEngineOptions,
@@ -291,24 +292,4 @@ export class EbbRuntime {
     });
     return { instance, engine };
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/**
- * Guarda para o campo `engine` do payload do comando `start`, lido de volta
- * via `JSON.parse` — não vira tipo por `as` sem checar o formato. Quando não
- * casa (journal de uma versão anterior a esta tarefa, ou dado corrompido),
- * cai no padrão de `EbbRuntime` em vez de mentir sobre o tipo.
- */
-function parseStartEngineOptions(
-  value: unknown,
-): Pick<StartEngineOptions, 'onHandlerError' | 'retry'> | undefined {
-  if (!isRecord(value)) return undefined;
-  const { onHandlerError, retry } = value;
-  if (onHandlerError !== 'fail' && onHandlerError !== 'incident') return undefined;
-  if (!isRecord(retry) || typeof retry.attempts !== 'number') return undefined;
-  return { onHandlerError, retry: { attempts: retry.attempts } };
 }
