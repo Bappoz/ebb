@@ -164,6 +164,26 @@ describe('ebb (binário construído)', () => {
     expect(journal.stdout).toContain('tick');
   });
 
+  it('fork e show --at recusam passo que não é inteiro positivo', async () => {
+    await ebb('deploy', 'pedido.bpmn');
+    const started = await ebb('start', 'Pedido');
+    const id = started.stdout.match(/instância (\S+)/)?.[1] ?? '';
+    expect(id).not.toBe('');
+
+    for (const bad of ['0', '1.5', '-1', 'x']) {
+      const fork = await ebb('fork', id, '--at', bad);
+      expect(fork.code).toBe(2);
+      expect(fork.stdout).toContain('--at');
+      expect((await ebb('show', id, '--at', bad)).code).toBe(2);
+    }
+    expect((await ebb('fork', id)).code).toBe(2);
+    expect((await ebb('fork')).code).toBe(2);
+
+    const forked = await ebb('fork', id, '--at', '1');
+    expect(forked.code).toBe(0);
+    expect(forked.stdout).toContain('bifurcada');
+  });
+
   it('sai com 2 quando --at é malformado', async () => {
     await ebb('deploy', 'pedido.bpmn');
     const started = await ebb('start', 'Pedido');

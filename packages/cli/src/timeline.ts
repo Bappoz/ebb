@@ -1,8 +1,8 @@
 import type { EbbRuntime, GatewayTrace } from '@ebb/runtime';
 import type { Store } from '@ebb/store';
 import type { CommandResult } from './commands.js';
-import { pendingLines, withInstance } from './instances.js';
-import { table } from './output.js';
+import { pendingLines, SHORT, withInstance } from './instances.js';
+import { CHECK, table } from './output.js';
 
 const IDENTIFIER = /[A-Za-z_$][\w$]*/g;
 
@@ -74,5 +74,24 @@ export async function showStep(
     const pending = pendingLines(step.tasks);
     if (pending.length > 0) lines.push('', ...pending);
     return { output: lines.join('\n'), exitCode: 0 };
+  });
+}
+
+/** `ebb fork <id> --at <seq>` — instância nova parada no passo `seq` da original. */
+export async function forkAt(
+  store: Store,
+  runtime: EbbRuntime,
+  prefix: string,
+  seq: number,
+): Promise<CommandResult> {
+  return withInstance(store, prefix, async (instance) => {
+    const forked = await runtime.fork(instance.id, seq);
+    return {
+      output: [
+        `${CHECK} bifurcada ${forked.instance.id} de ${instance.id.slice(0, SHORT)}@${seq} — ${forked.snapshot.status}`,
+        ...pendingLines(forked.tasks),
+      ].join('\n'),
+      exitCode: 0,
+    };
   });
 }

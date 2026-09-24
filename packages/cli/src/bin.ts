@@ -14,7 +14,7 @@ import {
 } from './instances.js';
 import { listIncidents, listJobs, resolveIncident, retryTask } from './jobs.js';
 import { resolveStorePath } from './paths.js';
-import { showStep } from './timeline.js';
+import { forkAt, showStep } from './timeline.js';
 import { parseVars } from './vars.js';
 import { runWorker } from './worker.js';
 
@@ -34,6 +34,7 @@ Instâncias:
   ebb signal <id> <nome>                entrega um evento ao diagrama
   ebb tick <id> [--at <iso>]            dispara os timers vencidos
   ebb journal <id>                      os comandos aplicados, em ordem
+  ebb fork <id> --at <n>                instância nova a partir do passo n; a original não muda
 
 Trabalho:
   ebb jobs                              o trabalho esperando worker
@@ -158,6 +159,16 @@ async function main(): Promise<number> {
           at === undefined
             ? await showInstance(store, runtime, id)
             : await showStep(store, runtime, id, at);
+        console.log(result.output);
+        return result.exitCode;
+      }
+      case 'fork': {
+        const id = argv[1];
+        if (!id || id.startsWith('--')) return usageError('Informe o id da instância.');
+        const at = positiveInteger(argv, 'at');
+        if (at === INVALID) return usageError(invalidOption('at', option(argv, 'at')));
+        if (at === undefined) return usageError('Informe o passo com --at <n>.');
+        const result = await forkAt(store, runtime, id, at);
         console.log(result.output);
         return result.exitCode;
       }

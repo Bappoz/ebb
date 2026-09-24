@@ -45,9 +45,10 @@ export async function listInstances(store: Store): Promise<CommandResult> {
     entry.status,
     `${entry.seq}`,
     entry.updatedAt,
+    origin(entry),
   ]);
   return {
-    output: table(['ID', 'PROCESSO', 'VERSÃO', 'ESTADO', 'COMANDOS', 'ATUALIZADA'], rows),
+    output: table(['ID', 'PROCESSO', 'VERSÃO', 'ESTADO', 'COMANDOS', 'ATUALIZADA', 'ORIGEM'], rows),
     exitCode: 0,
   };
 }
@@ -180,6 +181,13 @@ export async function withInstance(
   }
 }
 
+/** `<id-curto>@<seq>` de onde a instância foi bifurcada, ou vazio. */
+function origin(instance: InstanceRecord): string {
+  return instance.forkedFrom === undefined
+    ? ''
+    : `${instance.forkedFrom.slice(0, SHORT)}@${instance.forkedAt ?? '?'}`;
+}
+
 function describe(view: InstanceView): string {
   const { instance, snapshot } = view;
   const lines = [
@@ -196,6 +204,8 @@ function describe(view: InstanceView): string {
       ],
     ),
   ];
+  const from = origin(instance);
+  if (from) lines.push(`bifurcada de ${from}`);
 
   const variables = Object.entries(snapshot.variables);
   if (variables.length > 0) {

@@ -1,7 +1,8 @@
 import { checksumOf, SqliteStore } from '@ebb/store';
 import { EbbRuntime } from '@ebb/runtime';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { gatewayLine, showStep } from '../src/timeline.js';
+import { completeTask, listInstances, showInstance } from '../src/instances.js';
+import { forkAt, gatewayLine, showStep } from '../src/timeline.js';
 
 const GATEWAY = `<?xml version="1.0" encoding="UTF-8"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
@@ -114,5 +115,40 @@ describe('gatewayLine', () => {
         taken: ['A', 'B'],
       }),
     ).toBe('G: "valor > 10" → A, "valor < 100" → B (valor=50)');
+  });
+});
+
+describe('forkAt', () => {
+  it('bifurca, imprime o id novo e o que ficou pendente, e o valor novo leva a outro ramo', async () => {
+    await highApproval();
+
+    const result = await forkAt(store, runtime, 'abc1', 1);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('abc2def');
+    expect(result.output).toContain('abc1def@1');
+    expect(result.output).toContain('Avaliar pedido');
+
+    const [task] = (await runtime.inspect('abc2def')).tasks;
+    const low = await completeTask(store, runtime, 'abc2', task?.tokenId ?? '', { valor: 50 });
+    expect(low.output).toContain('completed');
+  });
+
+  it('sai com 1 e diz o intervalo quando o passo não existe', async () => {
+    await highApproval();
+    const result = await forkAt(store, runtime, 'abc1', 7);
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain('[1, 2]');
+  });
+});
+
+describe('proveniência', () => {
+  it('ps e show dizem de onde a bifurcação saiu', async () => {
+    await highApproval();
+    await forkAt(store, runtime, 'abc1', 1);
+
+    expect((await listInstances(store)).output).toContain('abc1def@1');
+    expect((await showInstance(store, runtime, 'abc2')).output).toContain('bifurcada de abc1def@1');
+    expect((await showInstance(store, runtime, 'abc1')).output).not.toContain('bifurcada');
   });
 });
