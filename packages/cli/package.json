@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.lint.json"
   },
   "dependencies": {
     "@bpmn-flow/core": "file:../../../bpmn-flow/packages/core",
