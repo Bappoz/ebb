@@ -106,9 +106,12 @@ Regras:
    cada comando. É a mesma disciplina do relógio congelado do chunk 1.
 3. **Entrada vira comando por guarda.** `commandFromEntry(entry)` em
    `commands.ts` valida `type` e `payload` e falha com o `seq` e o campo
-   errado. Nada de `as`. O `parseStartEngineOptions` de `runtime.ts` passa a
-   ser parte dessa guarda. Journal antigo sem `engine` no `start` continua
-   caindo no padrão do ebb, como hoje.
+   errado. Nada de `as`. O `parseStartEngineOptions` de `runtime.ts` muda para
+   `commands.ts` e passa a ser parte dessa guarda. O `start` exige `engine`
+   completo: sem ele, o replay não sabe com que `mode`, `maxSteps` e
+   `expressions` o motor nasceu, e a guarda falha dizendo isso. A retomada
+   pelo snapshot válido continua tolerante e cai nas políticas padrão do ebb,
+   como hoje.
 4. `upTo` omitido significa o journal inteiro. `upTo` fora de `[1, último seq]`
    é erro (`ReplayRangeError`), e não um corte silencioso.
 5. `entered` é o delta de `snapshot().history` (entradas com `seq` maior que o
@@ -233,9 +236,10 @@ forkInstance(input: {
 
 Entra no 3a, na ordem do plano:
 
-1. **Typecheck dos testes**: `tsconfig.test.json` por pacote, com
-   `tsc --noEmit -p tsconfig.test.json` no `typecheck` e, portanto, no
-   `verify`. É o **primeiro commit**, antes de qualquer código novo, porque o
+1. **Typecheck dos testes**: o `tsconfig.lint.json` de cada pacote já inclui
+   `src`, `test` e os configs com `noEmit`, então o script `typecheck` passa a
+   rodar também `tsc -p tsconfig.lint.json`, sem arquivo novo. Com isso ele
+   entra no `verify`. É o **primeiro commit**, antes de qualquer código novo, porque o
    3a mexe em contrato (`InstanceRecord`, `Store`) e é exatamente o caso que
    mordeu quatro vezes.
 2. Guarda do `EngineState` (acima, em "Guarda do estado gravado").
