@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.lint.json"
   },
   "dependencies": {
+    "@bpmn-flow/core": "file:../../../bpmn-flow/packages/core",
     "@bpmn-flow/editor": "file:../../../bpmn-flow/packages/editor",
     "@bpmn-flow/viewer": "file:../../../bpmn-flow/packages/viewer"
   },

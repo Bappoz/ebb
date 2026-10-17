@@ -224,17 +224,64 @@
                 </div>
               </div>
               <aside class="studio-diagnostics">
-                <div class="studio-diagnostics-head">
-                  <div>
-                    <p class="eyebrow">Verificação</p>
-                    <h3>Diagnósticos</h3>
-                  </div>
-                  <span id="studio-issue-count" class="count-pill">0</span>
+                <div class="studio-review-tabs" role="tablist" aria-label="Revisão do processo">
+                  <button
+                    id="studio-validation-tab"
+                    type="button"
+                    class="studio-review-tab active"
+                    role="tab"
+                    aria-selected="true"
+                    aria-controls="studio-validation-panel"
+                  >
+                    Validação <span id="studio-issue-count" class="count-pill">0</span>
+                  </button>
+                  <button
+                    id="studio-architecture-tab"
+                    type="button"
+                    class="studio-review-tab"
+                    role="tab"
+                    aria-selected="false"
+                    aria-controls="studio-architecture-panel"
+                    disabled
+                  >
+                    Arquitetura
+                  </button>
                 </div>
-                <p class="collection-help">
-                  Confira estruturas que podem afetar a execução no ebb.
-                </p>
-                <ul id="studio-issues" class="studio-issues" aria-live="polite"></ul>
+                <section
+                  id="studio-validation-panel"
+                  class="studio-review-panel"
+                  role="tabpanel"
+                  aria-labelledby="studio-validation-tab"
+                >
+                  <p class="collection-help">
+                    Confira estruturas que podem afetar a execução no ebb.
+                  </p>
+                  <ul id="studio-issues" class="studio-issues" aria-live="polite"></ul>
+                </section>
+                <section
+                  id="studio-architecture-panel"
+                  class="studio-review-panel studio-architecture-panel"
+                  role="tabpanel"
+                  aria-labelledby="studio-architecture-tab"
+                  hidden
+                >
+                  <div class="studio-diagnostics-head">
+                    <div>
+                      <p class="eyebrow">Leitura estrutural</p>
+                      <h3>Resumo do BPMN</h3>
+                    </div>
+                    <button id="studio-export-review" type="button" class="button ghost" disabled>
+                      Baixar relatório
+                    </button>
+                  </div>
+                  <div id="studio-architecture-summary" class="studio-architecture-summary"></div>
+                  <h4 class="studio-subheading">Processos e responsabilidades declaradas</h4>
+                  <ul id="studio-processes" class="studio-processes"></ul>
+                  <h4 class="studio-subheading">Riscos estruturais</h4>
+                  <ul id="studio-risks" class="studio-issues" aria-live="polite"></ul>
+                  <h4 class="studio-subheading">Construções fora do modelo de execução</h4>
+                  <ul id="studio-unsupported" class="studio-issues"></ul>
+                </section>
               </aside>
             </div>
           </section>
