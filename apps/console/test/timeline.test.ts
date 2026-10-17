@@ -53,20 +53,28 @@ beforeAll(async () => {
 
 describe('rotas', () => {
   it.each<[string, Route]>([
-    ['', { view: 'list' }],
-    ['#/', { view: 'list' }],
-    ['#/qualquer', { view: 'list' }],
+    ['', { view: 'dashboard' }],
+    ['#/', { view: 'dashboard' }],
+    ['#/qualquer', { view: 'dashboard' }],
+    ['#/tasks', { view: 'tasks' }],
+    ['#/tasks/inst-1/t1', { view: 'tasks', instanceId: 'inst-1', tokenId: 't1' }],
+    ['#/incidents', { view: 'incidents' }],
+    ['#/incidents/a%20b/t%2F1', { view: 'incidents', instanceId: 'a b', tokenId: 't/1' }],
     ['#/i/inst-1', { view: 'instance', id: 'inst-1' }],
     ['#/i/inst-1?step=2', { view: 'instance', id: 'inst-1', step: 2 }],
     ['#/i/inst-1?step=abc', { view: 'instance', id: 'inst-1' }],
     ['#/i/a%20b', { view: 'instance', id: 'a b' }],
-    ['#/i/%E0%A4%A', { view: 'list' }],
+    ['#/i/%E0%A4%A', { view: 'dashboard' }],
   ])('%s', (hash, route) => {
     expect(parseRoute(hash)).toEqual(route);
   });
 
   it('ida e volta', () => {
-    expect(routeTo({ view: 'list' })).toBe('#/');
+    expect(routeTo({ view: 'dashboard' })).toBe('#/');
+    expect(routeTo({ view: 'tasks' })).toBe('#/tasks');
+    expect(routeTo({ view: 'incidents', instanceId: 'a b', tokenId: 't/1' })).toBe(
+      '#/incidents/a%20b/t%2F1',
+    );
     expect(routeTo({ view: 'instance', id: 'a b', step: 3 })).toBe('#/i/a%20b?step=3');
     expect(parseRoute(routeTo({ view: 'instance', id: 'x/y', step: 1 }))).toEqual({
       view: 'instance',

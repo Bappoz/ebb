@@ -1,5 +1,6 @@
+import type { HumanTaskRecord, IncidentRecord, MutationResponse } from '@ebb/api';
 import type { ReplayView } from '@ebb/runtime';
-import type { InstanceRecord } from '@ebb/store';
+import type { InstanceRecord, ProcessSummary } from '@ebb/store';
 
 /*
  * Guardas estruturais das respostas da api. Mínimas de propósito — conferem o
@@ -24,6 +25,66 @@ function isInstance(value: unknown): value is InstanceRecord {
 
 export function isInstanceList(value: unknown): value is InstanceRecord[] {
   return Array.isArray(value) && value.every(isInstance);
+}
+
+export function isProcessList(value: unknown): value is ProcessSummary[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry: unknown) =>
+        isRecord(entry) &&
+        typeof entry.processKey === 'string' &&
+        typeof entry.latestVersion === 'number' &&
+        typeof entry.versions === 'number',
+    )
+  );
+}
+
+function isVariables(value: unknown): value is Record<string, unknown> {
+  return isRecord(value);
+}
+
+export function isHumanTaskList(value: unknown): value is HumanTaskRecord[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (task: unknown) =>
+        isRecord(task) &&
+        typeof task.instanceId === 'string' &&
+        typeof task.processKey === 'string' &&
+        typeof task.tokenId === 'string' &&
+        typeof task.nodeId === 'string' &&
+        Array.isArray(task.candidates) &&
+        isVariables(task.variables),
+    )
+  );
+}
+
+export function isIncidentList(value: unknown): value is IncidentRecord[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (incident: unknown) =>
+        isRecord(incident) &&
+        typeof incident.instanceId === 'string' &&
+        typeof incident.processKey === 'string' &&
+        typeof incident.tokenId === 'string' &&
+        typeof incident.nodeId === 'string' &&
+        typeof incident.message === 'string' &&
+        typeof incident.attempts === 'number' &&
+        isVariables(incident.variables),
+    )
+  );
+}
+
+export function isMutationResponse(value: unknown): value is MutationResponse {
+  return (
+    isRecord(value) &&
+    isInstance(value.instance) &&
+    isRecord(value.snapshot) &&
+    Array.isArray(value.tasks) &&
+    Array.isArray(value.incidents)
+  );
 }
 
 function isStep(value: unknown): boolean {

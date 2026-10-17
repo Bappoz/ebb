@@ -3,51 +3,201 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#111827" />
     <title>ebb console</title>
   </head>
   <body>
-    <header class="top">
-      <a href="#/" class="brand">ebb</a>
-      <span id="crumb"></span>
-    </header>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a href="#/" class="brand" aria-label="ebb início">
+          <span class="brand-mark">e</span>
+          <span>ebb</span>
+        </a>
 
-    <p id="error" class="error" hidden></p>
+        <nav class="nav" aria-label="Navegação principal">
+          <a href="#/" data-nav="dashboard">
+            <span class="nav-icon">◫</span><span>Visão geral</span>
+          </a>
+          <a href="#/tasks" data-nav="tasks">
+            <span class="nav-icon">✓</span><span>Minha fila</span>
+            <span id="task-badge" class="nav-badge" hidden>0</span>
+          </a>
+          <a href="#/incidents" data-nav="incidents">
+            <span class="nav-icon">!</span><span>Incidentes</span>
+            <span id="incident-badge" class="nav-badge danger" hidden>0</span>
+          </a>
+        </nav>
 
-    <main id="list-view" hidden>
-      <table class="instances">
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Processo</th>
-            <th>Versão</th>
-            <th>Estado</th>
-            <th>Comandos</th>
-            <th>Origem</th>
-          </tr>
-        </thead>
-        <tbody id="instances"></tbody>
-      </table>
-      <p id="empty" hidden>Nenhuma instância. Comece com: <code>ebb start &lt;chave&gt;</code></p>
-    </main>
-
-    <main id="debugger-view" class="debugger" hidden>
-      <div id="diagram" class="diagram"></div>
-      <aside class="panel">
-        <div class="controls">
-          <button id="prev" type="button" aria-label="Passo anterior">◀</button>
-          <input id="step" type="range" min="1" max="1" value="1" aria-label="Passo" />
-          <button id="next" type="button" aria-label="Próximo passo">▶</button>
+        <div class="sidebar-foot">
+          <span class="connection-dot"></span>
+          <span>Servidor local</span>
         </div>
-        <h2 id="step-title"></h2>
-        <p id="status" class="status"></p>
-        <pre id="payload" class="payload"></pre>
-        <section id="gateways"></section>
-        <section id="entered"></section>
-        <section id="variables"></section>
-        <section id="tasks"></section>
-        <button id="fork" type="button" class="fork">Bifurcar daqui</button>
       </aside>
-    </main>
+
+      <div class="workspace">
+        <header class="topbar">
+          <div>
+            <p id="eyebrow" class="eyebrow">Operação</p>
+            <h1 id="crumb">Visão geral</h1>
+          </div>
+          <button id="open-start" type="button" class="button primary">
+            <span>＋</span> Nova instância
+          </button>
+        </header>
+
+        <div id="error" class="notice error" role="alert" hidden></div>
+        <div id="success" class="notice success" role="status" hidden></div>
+
+        <main class="content">
+          <section id="dashboard-view" class="view" hidden>
+            <div class="welcome">
+              <div>
+                <p class="eyebrow">Agora</p>
+                <h2>Seus processos, sem caixa-preta.</h2>
+                <p>Opere o trabalho pendente e entre no histórico de qualquer execução.</p>
+              </div>
+              <span id="updated-at" class="updated-at"></span>
+            </div>
+
+            <div class="metrics" aria-label="Resumo operacional">
+              <article class="metric-card accent">
+                <span class="metric-label">Em andamento</span>
+                <strong id="metric-running">0</strong>
+                <span class="metric-detail">instâncias vivas</span>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Tarefas humanas</span>
+                <strong id="metric-tasks">0</strong>
+                <span class="metric-detail">aguardando decisão</span>
+              </article>
+              <article class="metric-card warning">
+                <span class="metric-label">Incidentes</span>
+                <strong id="metric-incidents">0</strong>
+                <span class="metric-detail">precisam de atenção</span>
+              </article>
+              <article class="metric-card">
+                <span class="metric-label">Processos</span>
+                <strong id="metric-processes">0</strong>
+                <span class="metric-detail">definições publicadas</span>
+              </article>
+            </div>
+
+            <section class="surface">
+              <div class="section-head">
+                <div>
+                  <p class="eyebrow">Explorar</p>
+                  <h2>Execuções recentes</h2>
+                </div>
+                <span class="hint">Clique para abrir o time-travel</span>
+              </div>
+              <div class="table-wrap">
+                <table class="instances">
+                  <thead>
+                    <tr>
+                      <th>Processo</th>
+                      <th>Instância</th>
+                      <th>Estado</th>
+                      <th>Versão</th>
+                      <th>Comandos</th>
+                      <th>Origem</th>
+                    </tr>
+                  </thead>
+                  <tbody id="instances"></tbody>
+                </table>
+              </div>
+              <div id="empty" class="empty-state" hidden>
+                <span class="empty-icon">◇</span>
+                <h3>Nenhuma instância ainda</h3>
+                <p>Publique um BPMN e inicie a primeira execução.</p>
+              </div>
+            </section>
+          </section>
+
+          <section id="tasks-view" class="view master-detail" hidden>
+            <aside class="collection-pane">
+              <div class="collection-head">
+                <div>
+                  <p class="eyebrow">Trabalho</p>
+                  <h2>Minha fila</h2>
+                </div>
+                <span id="task-count" class="count-pill">0</span>
+              </div>
+              <p class="collection-help">Tarefas humanas prontas para continuar o processo.</p>
+              <div id="task-list" class="item-list"></div>
+            </aside>
+            <article id="task-detail" class="detail-pane"></article>
+          </section>
+
+          <section id="incidents-view" class="view master-detail" hidden>
+            <aside class="collection-pane">
+              <div class="collection-head">
+                <div>
+                  <p class="eyebrow">Operação</p>
+                  <h2>Incidentes</h2>
+                </div>
+                <span id="incident-count" class="count-pill danger">0</span>
+              </div>
+              <p class="collection-help">Falhas técnicas que interromperam uma atividade.</p>
+              <div id="incident-list" class="item-list"></div>
+            </aside>
+            <article id="incident-detail" class="detail-pane"></article>
+          </section>
+
+          <section id="debugger-view" class="view debugger" hidden>
+            <div id="diagram" class="diagram"></div>
+            <aside class="debug-panel">
+              <div class="debug-kicker">
+                <span>Time-travel</span>
+                <span id="status" class="status-chip"></span>
+              </div>
+              <div class="controls">
+                <button id="prev" type="button" aria-label="Passo anterior">←</button>
+                <input id="step" type="range" min="1" max="1" value="1" aria-label="Passo" />
+                <button id="next" type="button" aria-label="Próximo passo">→</button>
+              </div>
+              <h2 id="step-title"></h2>
+              <details class="payload-block">
+                <summary>Payload do comando</summary>
+                <pre id="payload" class="payload"></pre>
+              </details>
+              <section id="gateways"></section>
+              <section id="entered"></section>
+              <section id="variables"></section>
+              <section id="tasks"></section>
+              <button id="fork" type="button" class="button secondary full">Bifurcar daqui</button>
+            </aside>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <dialog id="start-dialog" class="modal">
+      <form id="start-form" method="dialog">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">Nova execução</p>
+            <h2>Iniciar processo</h2>
+          </div>
+          <button id="close-start" type="button" class="icon-button" aria-label="Fechar">×</button>
+        </div>
+        <label class="field">
+          <span>Processo publicado</span>
+          <select id="start-process" required></select>
+        </label>
+        <label class="field">
+          <span>Variáveis iniciais <small>JSON</small></span>
+          <textarea id="start-variables" rows="8" spellcheck="false">{}</textarea>
+        </label>
+        <label class="field compact">
+          <span>Retries automáticos</span>
+          <input id="start-retries" type="number" value="0" min="0" step="1" />
+        </label>
+        <div class="modal-actions">
+          <button id="cancel-start" type="button" class="button ghost">Cancelar</button>
+          <button id="submit-start" type="submit" class="button primary">Iniciar instância</button>
+        </div>
+      </form>
+    </dialog>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

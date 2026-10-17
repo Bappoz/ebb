@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { errorMessage, isForkResponse, isInstanceList, isReplayView } from '../src/wire.js';
+import {
+  errorMessage,
+  isForkResponse,
+  isHumanTaskList,
+  isIncidentList,
+  isInstanceList,
+  isMutationResponse,
+  isProcessList,
+  isReplayView,
+} from '../src/wire.js';
 
 const INSTANCE = {
   id: 'inst-1',
@@ -52,5 +61,46 @@ describe('guardas das respostas', () => {
     expect(errorMessage({ error: 'nope' })).toBe('nope');
     expect(errorMessage({ error: 1 })).toBeUndefined();
     expect(errorMessage(undefined)).toBeUndefined();
+  });
+
+  it('processos, tarefas e incidentes', () => {
+    expect(isProcessList([{ processKey: 'P', latestVersion: 1, versions: 1 }])).toBe(true);
+    expect(isProcessList([{ processKey: 'P', latestVersion: '1', versions: 1 }])).toBe(false);
+
+    expect(
+      isHumanTaskList([
+        {
+          instanceId: 'i1',
+          processKey: 'P',
+          tokenId: 't1',
+          nodeId: 'Review',
+          candidates: [],
+          variables: { total: 1 },
+        },
+      ]),
+    ).toBe(true);
+    expect(isHumanTaskList([{ instanceId: 'i1' }])).toBe(false);
+
+    expect(
+      isIncidentList([
+        {
+          instanceId: 'i1',
+          processKey: 'P',
+          tokenId: 't1',
+          nodeId: 'Charge',
+          message: 'offline',
+          attempts: 1,
+          variables: {},
+        },
+      ]),
+    ).toBe(true);
+    expect(isIncidentList([{ message: 'offline' }])).toBe(false);
+  });
+
+  it('resposta de mutação', () => {
+    expect(isMutationResponse({ instance: INSTANCE, snapshot: {}, tasks: [], incidents: [] })).toBe(
+      true,
+    );
+    expect(isMutationResponse({ instance: INSTANCE, snapshot: {}, tasks: {} })).toBe(false);
   });
 });
