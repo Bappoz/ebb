@@ -834,17 +834,162 @@ a {
   background: #fff;
 }
 
+.studio-review-tabs {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.7rem 0.8rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.studio-review-tab {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.55rem 0.65rem 0.7rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: #788397;
+  background: transparent;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.studio-review-tab.active {
+  border-color: var(--accent);
+  color: #5143b8;
+}
+
+.studio-review-tab:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.studio-review-tab .count-pill {
+  min-width: 1.25rem;
+  padding: 0.08rem 0.32rem;
+  font-size: 0.66rem;
+}
+
+.studio-review-panel[hidden] {
+  display: none;
+}
+
 .studio-diagnostics-head {
   display: flex;
+  gap: 0.7rem;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 1rem 0;
+  padding: 1rem 0 0;
 }
 
 .studio-diagnostics-head h3 {
   margin: 0;
   font-family: Inter, Aptos, 'Segoe UI', system-ui, sans-serif;
   font-size: 0.98rem;
+}
+
+.studio-review-panel .collection-help {
+  margin: 0.6rem 1rem 0.8rem;
+}
+
+.studio-architecture-panel {
+  padding: 0 0.8rem 1rem;
+}
+
+.studio-architecture-panel .studio-diagnostics-head .button {
+  min-height: 2.15rem;
+  padding: 0.35rem 0.55rem;
+  font-size: 0.69rem;
+}
+
+.studio-architecture-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin: 0.9rem 0 1.1rem;
+}
+
+.studio-architecture-metric {
+  display: grid;
+  gap: 0.15rem;
+  min-height: 3.4rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: #fbfcfe;
+}
+
+.studio-architecture-metric strong {
+  color: #3d4760;
+  font-family: Inter, Aptos, 'Segoe UI', system-ui, sans-serif;
+  font-size: 1rem;
+}
+
+.studio-architecture-metric span {
+  color: #808a9d;
+  font-size: 0.65rem;
+}
+
+.studio-subheading {
+  margin: 1rem 0 0.5rem;
+  color: #737d91;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.studio-processes {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.studio-process-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: #fff;
+}
+
+.studio-process-title {
+  display: flex;
+  gap: 0.45rem;
+  justify-content: space-between;
+  align-items: start;
+  color: #38435a;
+  font-size: 0.75rem;
+}
+
+.studio-process-kind {
+  flex: 0 0 auto;
+  padding: 0.12rem 0.35rem;
+  border-radius: 999px;
+  color: #697386;
+  background: #eff1f5;
+  font-size: 0.6rem;
+}
+
+.studio-process-kind.executable {
+  color: #16704f;
+  background: var(--success-soft);
+}
+
+.studio-process-details,
+.studio-process-metadata {
+  margin: 0;
+  color: #747f92;
+  font-size: 0.67rem;
+  line-height: 1.5;
+}
+
+.studio-process-metadata strong {
+  color: #596478;
 }
 
 .studio-diagnostics .collection-help {
@@ -857,6 +1002,39 @@ a {
   margin: 0;
   padding: 0 0.8rem 1rem;
   list-style: none;
+}
+
+.studio-review-empty {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.75rem;
+  border: 1px solid #e6e9f0;
+  border-radius: 0.6rem;
+  color: #626d80;
+  background: #fafbfc;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.studio-review-empty strong {
+  color: #465168;
+}
+
+.studio-focus-link {
+  width: fit-content;
+  padding: 0;
+  border: 0;
+  color: #5547bf;
+  background: transparent;
+  font-size: 0.68rem;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-focus-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
 }
 
 .studio-issue {

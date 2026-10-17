@@ -124,7 +124,9 @@ daqui" cria uma instância nova a partir do passo e a abre. O passo fica na URL
 navegue dos diagnósticos aos elementos do diagrama. Em navegadores com acesso
 seguro a arquivos, ele salva no arquivo escolhido e detecta alterações externas;
 nos demais, oferece download da cópia editada. Publicar a versão pelo Studio e
-selecionar arquivos por uma árvore do projeto seguem no roadmap.
+selecionar arquivos por uma árvore do projeto seguem no roadmap. A aba
+**Arquitetura** resume atividades, gateways, dados, raias, candidatos e riscos
+estruturais, com um relatório Markdown para compartilhar a revisão.
 
 Ele só atende em `127.0.0.1` e recusa `Host` de fora: ainda não há auth.
 
