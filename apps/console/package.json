@@ -17,6 +17,7 @@
     "@bpmn-flow/viewer": "file:../../../bpmn-flow/packages/viewer"
   },
   "devDependencies": {
+    "@ebb/api": "^0.0.0",
     "@ebb/runtime": "^0.0.0",
     "@ebb/store": "^0.0.0",
     "vite": "^8.3.0"

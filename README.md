@@ -5,9 +5,10 @@ Orquestração de processos **BPMN 2.0** que você pode rebobinar.
 Livre de verdade (Apache-2.0), nativo em TypeScript, e sobe com um comando —
 sem JVM, sem Elasticsearch, sem build nativo.
 
-> **Estado: chunk 2 de 8.** Publica definições, roda instâncias com journal
-> durável e entrega service tasks a workers em outro processo, com retry e
-> incidente. O time-travel vem no próximo.
+> **Estado: chunks 0–5 de 8.** O MVP técnico está fechado: publica definições,
+> roda instâncias com journal durável, entrega jobs a workers, rebobina e
+> bifurca execuções no navegador e testa caminhos BPMN com cobertura de
+> `sequenceFlow`. A operação local já inclui tarefas humanas e incidentes.
 > Desenho completo em [`docs/superpowers/specs/2026-09-14-ebb-design.md`](docs/superpowers/specs/2026-09-14-ebb-design.md).
 
 ## Por que existe
@@ -106,15 +107,38 @@ executa.
 ebb console                         # http://127.0.0.1:4321
 ```
 
-O console lista as instâncias e abre um depurador de cada uma: o diagrama
-pintado com o que concluiu, o que espera e os fluxos tomados, e um slider que
-anda comando a comando — voltar despinta o que o passo fez. O painel mostra o
-payload do comando, as variáveis e, em cada gateway, as opções com a condição
-e a tomada destacada, com as variáveis daquele instante. "Bifurcar daqui" cria
-a instância nova a partir do passo e a abre. O passo fica na URL
+O console abre em uma visão operacional: instâncias em andamento, tarefas
+humanas, incidentes e processos publicados. **Minha fila** transforma as
+variáveis visíveis da tarefa em controles editáveis e continua o processo sem
+sair do navegador. **Incidentes** permite tentar a atividade de novo ou
+resolvê-la com valores corrigidos. **Nova instância** escolhe uma definição
+publicada e recebe as variáveis iniciais em JSON.
+
+Ao abrir uma execução, o depurador pinta no BPMN o que concluiu, o que espera e
+os fluxos tomados. O slider anda comando a comando — voltar despinta o que o
+passo fez — e mostra payload, variáveis e a razão de cada gateway. "Bifurcar
+daqui" cria uma instância nova a partir do passo e a abre. O passo fica na URL
 (`#/i/<id>?step=2`), então o link leva ao mesmo lugar.
 
 Ele só atende em `127.0.0.1` e recusa `Host` de fora: ainda não há auth.
+
+### API local
+
+O mesmo servidor oferece JSON para automação local. Escritas exigem
+`Content-Type: application/json`.
+
+| Método e rota                                      | Operação                                                                   |
+| -------------------------------------------------- | -------------------------------------------------------------------------- |
+| `GET /api/processes`                               | Lista definições publicadas.                                               |
+| `POST /api/instances`                              | Inicia por `processKey`, com `version`, `variables` e `retries` opcionais. |
+| `GET /api/instances/:id`                           | Inspeciona o estado atual.                                                 |
+| `GET /api/instances/:id/replay`                    | Reconstrói todos os passos do time-travel.                                 |
+| `POST /api/instances/:id/fork`                     | Bifurca no `seq` informado.                                                |
+| `GET /api/tasks`                                   | Lista tarefas humanas pendentes.                                           |
+| `POST /api/tasks/:instanceId/:tokenId/complete`    | Conclui uma tarefa com `output` opcional.                                  |
+| `GET /api/incidents`                               | Lista incidentes abertos com contexto.                                     |
+| `POST /api/incidents/:instanceId/:tokenId/retry`   | Tenta a atividade novamente.                                               |
+| `POST /api/incidents/:instanceId/:tokenId/resolve` | Resolve o incidente com `output` opcional.                                 |
 
 ### Workers: a service task fora do processo
 
@@ -160,6 +184,51 @@ morre segurando um job o devolve **quando o lease vence** — não por heartbeat
 Não há timeout de processo filho: um script que trava mantém o worker parado,
 embora o job volte para a fila no fim do lease.
 
+### Testar o processo como código
+
+`@ebb/testing` roda cada cenário em SQLite na memória, com relógio controlado e
+dublês de worker que passam pelo mesmo journal da produção. A fixture acumula os
+fluxos tomados entre cenários; o matcher final faz o CI falhar e lista cada
+`sequenceFlow` que ficou sem teste.
+
+```ts
+import { afterAll, expect, test } from 'vitest';
+import { testProcess } from '@ebb/testing';
+import { installEbbMatchers } from '@ebb/testing/vitest';
+import { PEDIDO } from './pedido.js';
+
+installEbbMatchers(expect);
+const pedido = await testProcess(PEDIDO, {
+  workers: {
+    charge: async ({ variables }) => ({ cobrado: variables.total }),
+  },
+});
+
+test('valor alto passa pela diretoria', async () => {
+  const run = await pedido.start();
+  await run.complete('Avaliar', { valor: 150 });
+
+  expect(run).toHaveVisited('Diretoria');
+  expect(run).toHaveTaken('Flow_Alto');
+});
+
+test('valor baixo segue direto', async () => {
+  const run = await pedido.start();
+  await run.complete('Avaliar', { valor: 50 });
+
+  expect(run).toHaveTaken('Flow_Baixo');
+});
+
+afterAll(() => {
+  expect(pedido.coverage()).toHaveFullFlowCoverage();
+  pedido.close();
+});
+```
+
+Timers não dormem no teste: `await run.advanceBy(60_000)` avança o relógio e
+aplica `tick`. Um dublê que lança `BpmnError` percorre o boundary de negócio;
+outro erro usa o retry e o incidente configurados na instância.
+
 ### Publicar é um portão, não um upload
 
 `deploy` roda a validação do `@bpmn-flow/core` e **recusa** um diagrama com
@@ -175,7 +244,10 @@ qualquer byte diferente cria.
 | -------------- | ------------------------------------------------------------------ |
 | `@ebb/store`   | Persistência. SQLite via `node:sqlite`; Postgres quando houver HA. |
 | `@ebb/runtime` | Ciclo de vida de instância: aplica comando, journala, persiste.    |
+| `@ebb/testing` | Fixture Vitest, relógio, workers dublês e cobertura BPMN.          |
+| `@ebb/api`     | HTTP local para o console e integrações.                           |
 | `@ebb/cli`     | Definições, instâncias, jobs, incidentes e `ebb worker`.           |
+| `apps/console` | Operação, tarefas, incidentes e depurador visual de time-travel.   |
 
 ## Desenvolvimento
 

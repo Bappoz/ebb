@@ -1,6 +1,6 @@
 # Handoff — roteiro até virar produto
 
-> Escrito ao final do chunk 2 (workers e jobs), 2026-09-24. Substitui o handoff
+> Atualizado ao final do chunk 5 (operação local), 2026-09-27. Substitui o handoff
 > anterior, que só cobria o chunk 3 — este cobre tudo que falta para o ebb
 > deixar de ser "MVP interessante" e virar algo que alguém de fora escolhe no
 > lugar de Camunda/Temporal. Dividido em seções fechadas: trabalhe uma por
@@ -10,11 +10,11 @@
 ## Onde estamos
 
 Chunks 0-3a mergeados em `master` (PRs #1, #2 e #3; no `bpmn-flow`, #58 e
-#61). **Chunk 3b (console de time-travel) entregue** na branch
-`feat/console-time-travel`: spec em
-`docs/superpowers/specs/2026-09-24-ebb-chunk-3b-console.md`, plano ao lado,
-`npm run verify` verde e o roteiro do "termina quando" verificado no Chrome.
-**A Seção 1 está fechada.** O próximo passo é a **Seção 2** (teste de processo).
+#61). **Chunks 3b, 4 e 5 entregues** na branch `feat/console-time-travel`:
+time-travel, `@ebb/testing` e a operação local por API/console. Specs e planos
+vivem em `docs/superpowers/{specs,plans}`. **As Seções 1 e 2 estão fechadas; o
+recorte local da Seção 3 também.** O próximo passo de produto é tornar essa API
+remota: auth, workers HTTP e SDK.
 
 As regras que os chunks 1-3b fixaram (relógio congelado por comando, versão
 congelada na instância, journal+snapshot atômicos, job é decisão do diagrama,
@@ -71,73 +71,59 @@ opções e a tomada, e bifurca a partir do passo. O passo vive na URL
 
 ---
 
-## Seção 2 — Teste de processo (`@ebb/testing`)
+## Seção 2 — Teste de processo (`@ebb/testing`) — feito
 
 > Termina quando: `npm test` falha porque um caminho do diagrama nunca foi
 > exercitado.
 
-Este é o outro grande diferencial do design (ao lado do time-travel) e hoje
-não tem nem esqueleto. Sem ele, "processo testável como código" é só slogan.
+Entregue em `packages/testing`: `testProcess` cria cenários isolados em SQLite
+`:memory:`, `withClock`/`advanceTo` controlam timers, e dublês de worker usam o
+mesmo `activateJobs` + `completeJob`/`failJob` da produção. `ProcessRun` expõe
+comandos por `nodeId`, caminho visitado e journal; a fixture agrega fluxos de
+todos os cenários. Os matchers `toHaveVisited`, `toHaveTaken` e
+`toHaveFullFlowCoverage` integram com Vitest, e a mensagem de cobertura lista
+id, origem, destino e escopo de cada fluxo ausente.
 
-Trabalho:
-
-1. **Relógio determinístico injetável** já existe no motor (`now: () =>
-number`); o pacote precisa expor isso como fixture de teste (`withClock`,
-   `advanceTo`).
-2. **Dublê de worker**: em vez de subir `ebb worker` de verdade, um handler de
-   teste que intercepta por `type` do job e devolve/journala uma saída fixa —
-   sem processo filho, sem SQLite real (ou com SQLite `:memory:`).
-3. **Asserção de caminho**: dado um diagrama e uma sequência de comandos,
-   afirmar que os nós X, Y, Z foram visitados e W não foi. Precisa de acesso à
-   `history` do `ExecutionSnapshot`, que já existe.
-4. **Cobertura de diagrama**: análogo a cobertura de linha — de todos os flows
-   do BPMN, quantos foram exercitados pela suíte. Isto é o gancho de
-   marketing mais forte do pacote ("seu CI falha se um `<sequenceFlow>` nunca
-   rodou") e não existe em nenhum concorrente hoje.
-5. Integração com Vitest (o design já decide isso) via matcher customizado
-   (`expect(snapshot).toHaveVisited('NodeId')`) e um reporter opcional de
-   cobertura de diagrama.
-
-Decisão em aberto: o dublê de worker jornala como se fosse produção (mesmo
-`completeJob`/`failJob`) ou é um caminho de teste separado que nunca toca o
-store? Recomendo o primeiro — mantém o teste honesto sobre o que realmente
-roda em produção — mas precisa de brainstorming antes de codar.
+A decisão aberta foi fechada a favor do caminho de produção: erro técnico
+consome retry/abre incidente e `BpmnError` percorre boundary. Não há reporter
+global automático; o matcher explícito no `afterAll` é o portão de CI, sem
+estado global nem arquivos intermediários.
 
 ---
 
-## Seção 3 — Tarefa humana + `@ebb/api` + console
+## Seção 3 — Tarefa humana + `@ebb/api` + console — operação local feita
 
 > Termina quando: uma pessoa conclui uma tarefa no navegador, com formulário
 > vindo das variáveis do processo.
 
-O `@ebb/api` já existe desde o 3b: Hono, `createApp({ store, runtime, assets })`
-e `serveApp` (sempre em `127.0.0.1`). A proteção de hoje vem do lugar em que
-roda: `Host` fora de loopback → `403` (DNS rebinding) e escrita sem
-`Content-Type: application/json` → `415` (CSRF). **Auth substitui a trava de
-loopback em vez de se somar a ela às cegas**: no dia em que o servidor sair de
-127.0.0.1, a checagem de `Host` e a de `Content-Type` precisam ser repensadas
-junto com a API key, não herdadas.
+Entregue no chunk 5: a API inicia e inspeciona instâncias, lista processos,
+lista/conclui tarefas humanas e lista/tenta novamente/resolve incidentes. O
+console ganhou dashboard, início de instância, inbox com formulário gerado das
+variáveis, central de incidentes e o depurador existente. A interface é
+responsiva, usa apenas fontes do sistema e mantém dados do processo fora de
+`innerHTML`.
 
-Trabalho:
+O servidor continua deliberadamente em `127.0.0.1`: `Host` fora de loopback →
+`403` (DNS rebinding) e escrita sem `Content-Type: application/json` → `415`
+(CSRF). **Auth substitui a trava de loopback em vez de se somar a ela às
+cegas**: quando o servidor sair de 127.0.0.1, exposição, `Host`, CORS e API key
+entram numa mudança única.
 
-1. **`@ebb/api`** cresce: rotas para
-   instância (start/apply/inspect), jobs (ativar/completar/falhar — mesmo
-   contrato do `ebb worker`, mas por HTTP long-poll em vez de processo
-   filho), tarefas humanas (listar/completar).
-2. **Auth**: mínimo viável é API key por processo/tenant; multi-tenant de
+Trabalho restante para fechar a API remota:
+
+1. **Workers HTTP**: ativar/completar/falhar jobs com lease e long-poll — mesmo
+   contrato do `ebb worker`, sem expor o store.
+2. **Auth e exposição de rede**: mínimo viável é API key por processo/tenant;
+   multi-tenant de
    verdade é seção 6 (operação). Não empurrar OAuth/SSO para cá sem alguém
    pedindo.
-3. **Formulário de tarefa humana**: o BPMN não tem schema de formulário
-   nativo padronizado (Camunda usa `camunda:formData`, Zeebe usa
-   `zeebe:userTask` + JSON forms). Decidir: gerar formulário das variáveis
-   visíveis no escopo (schema-less, mais simples, menos preciso) ou suportar
-   a extensão do Camunda (mais trabalho, mais compatível com diagrama
-   existente). Brainstorming decide isso antes de codar.
-4. **`apps/console`**: inbox de tarefa (lista + completar) e lista de
-   incidente (reusa o que o CLI já faz, mas na web). O depurador de
-   time-travel já existe (3b); "bifurcar com valores novos" entra aqui, junto
-   com o formulário.
-5. Mover a resolução de prefixo de id (`withInstance`) para `EbbRuntime`
+3. **SDK**: cliente TypeScript sobre a API, inclusive worker e tipos gerados
+   do BPMN; detalhado em 7.1.
+4. **Form schema opcional**: o formulário atual deriva controles das variáveis
+   visíveis. Suportar Camunda/Zeebe forms só quando houver um diagrama real que
+   precise de rótulos, validação ou campos que ainda não existem nas variáveis.
+5. **Bifurcar com valores novos** no console.
+6. Mover a resolução de prefixo de id (`withInstance`) para `EbbRuntime`
    agora que o HTTP é o terceiro consumidor — dívida nomeada desde o chunk 1.
 
 ---

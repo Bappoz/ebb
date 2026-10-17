@@ -27,12 +27,33 @@ const GATEWAY = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmn:process>
 </bpmn:definitions>`;
 
+const EXTERNAL_JOB = `<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:zeebe="http://camunda.org/schema/zeebe/1.0"
+  targetNamespace="http://ebb.test" id="DefsJobs">
+  <bpmn:process id="Cobranca" name="Cobrança" isExecutable="true">
+    <bpmn:startEvent id="StartJob" />
+    <bpmn:serviceTask id="Charge" name="Cobrar cartão">
+      <bpmn:extensionElements><zeebe:taskDefinition type="charge" /></bpmn:extensionElements>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="EndJob" />
+    <bpmn:sequenceFlow id="jf0" sourceRef="StartJob" targetRef="Charge" />
+    <bpmn:sequenceFlow id="jf1" sourceRef="Charge" targetRef="EndJob" />
+  </bpmn:process>
+</bpmn:definitions>`;
+
 let store: SqliteStore;
 let runtime: EbbRuntime;
 
 beforeEach(async () => {
   store = new SqliteStore({ path: ':memory:' });
   await store.deploy({ processKey: 'Aprovacao', xml: GATEWAY, checksum: checksumOf(GATEWAY) });
+  await store.deploy({
+    processKey: 'Cobranca',
+    xml: EXTERNAL_JOB,
+    checksum: checksumOf(EXTERNAL_JOB),
+    name: 'Cobrança',
+  });
   let ids = 0;
   runtime = new EbbRuntime({ store, newId: () => `inst-${++ids}` });
 });
@@ -145,6 +166,135 @@ function fork(id: string, body: string, contentType = 'application/json') {
     body,
   });
 }
+
+function post(path: string, body: unknown, contentType = 'application/json') {
+  return createApp({ store, runtime }).request(path, {
+    method: 'POST',
+    headers: { 'content-type': contentType },
+    body: JSON.stringify(body),
+  });
+}
+
+describe('operação de instâncias', () => {
+  it('lista processos, inicia e inspeciona uma instância', async () => {
+    const processes = await createApp({ store, runtime }).request('/api/processes');
+    expect(await processes.json()).toMatchObject([
+      { processKey: 'Aprovacao', latestVersion: 1 },
+      { processKey: 'Cobranca', name: 'Cobrança', latestVersion: 1 },
+    ]);
+
+    const created = await post('/api/instances', {
+      processKey: 'Aprovacao',
+      variables: { solicitante: 'Ana' },
+      retries: 2,
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({
+      instance: { id: 'inst-1', processKey: 'Aprovacao' },
+      snapshot: { variables: { solicitante: 'Ana' } },
+      tasks: [{ nodeId: 'Avaliar' }],
+    });
+
+    const detail = await createApp({ store, runtime }).request('/api/instances/inst-1');
+    expect(await detail.json()).toMatchObject({
+      instance: { id: 'inst-1' },
+      journal: [{ type: 'start' }],
+    });
+  });
+
+  it.each([
+    [{ processKey: '' }, 'processKey'],
+    [{ processKey: 'Aprovacao', variables: [] }, 'variables'],
+    [{ processKey: 'Aprovacao', version: 0 }, 'version'],
+    [{ processKey: 'Aprovacao', retries: -1 }, 'retries'],
+  ])('recusa corpo inválido (%j)', async (body, field) => {
+    const res = await post('/api/instances', body);
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toContain(field);
+  });
+
+  it('exige JSON em toda escrita', async () => {
+    const res = await post('/api/instances', { processKey: 'Aprovacao' }, 'text/plain');
+    expect(res.status).toBe(415);
+    expect(await errorOf(res)).toContain('application/json');
+  });
+});
+
+describe('tarefas humanas', () => {
+  it('lista com contexto e conclui com variáveis do formulário', async () => {
+    await runtime.start('Aprovacao', { variables: { pedido: 42 } });
+
+    const listed = await createApp({ store, runtime }).request('/api/tasks');
+    const tasks: unknown = await listed.json();
+    expect(tasks).toMatchObject([
+      {
+        instanceId: 'inst-1',
+        processKey: 'Aprovacao',
+        nodeId: 'Avaliar',
+        name: 'Avaliar pedido',
+        variables: { pedido: 42 },
+      },
+    ]);
+    const first: unknown = Array.isArray(tasks) ? (tasks as unknown[])[0] : undefined;
+    if (typeof first !== 'object' || first === null) {
+      throw new Error('lista de tarefas inválida');
+    }
+    const tokenId = 'tokenId' in first ? first.tokenId : undefined;
+    if (typeof tokenId !== 'string') throw new Error('tarefa sem tokenId');
+
+    const completed = await post(`/api/tasks/inst-1/${tokenId}/complete`, {
+      output: { valor: 150 },
+    });
+    expect(completed.status).toBe(200);
+    expect(await completed.json()).toMatchObject({ tasks: [{ nodeId: 'Diretoria' }] });
+  });
+
+  it('não deixa a rota humana concluir um job', async () => {
+    const started = await runtime.start('Cobranca');
+    const tokenId = started.tasks[0]?.tokenId ?? '';
+    const res = await post(`/api/tasks/inst-1/${tokenId}/complete`, {});
+
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toContain('não é uma tarefa humana');
+  });
+});
+
+describe('incidentes', () => {
+  async function openIncident(): Promise<string> {
+    const started = await runtime.start('Cobranca');
+    const tokenId = started.tasks[0]?.tokenId ?? '';
+    await runtime.failJob(started.instance.id, tokenId, { message: 'gateway offline' });
+    return tokenId;
+  }
+
+  it('lista e resolve um incidente com saída', async () => {
+    const tokenId = await openIncident();
+    const listed = await createApp({ store, runtime }).request('/api/incidents');
+    expect(await listed.json()).toMatchObject([
+      {
+        instanceId: 'inst-1',
+        nodeId: 'Charge',
+        message: 'gateway offline',
+        attempts: 1,
+      },
+    ]);
+
+    const resolved = await post(`/api/incidents/inst-1/${tokenId}/resolve`, {
+      output: { cobrado: false },
+    });
+    expect(await resolved.json()).toMatchObject({ snapshot: { status: 'completed' } });
+  });
+
+  it('retenta um incidente e recusa token que não está aberto', async () => {
+    const tokenId = await openIncident();
+    const retried = await post(`/api/incidents/inst-1/${tokenId}/retry`, {});
+    expect(await retried.json()).toMatchObject({ tasks: [{ reason: 'job' }] });
+
+    const missing = await post('/api/incidents/inst-1/inexistente/retry', {});
+    expect(missing.status).toBe(400);
+    expect(await errorOf(missing)).toContain('não é um incidente');
+  });
+});
 
 describe('bifurcar', () => {
   it('201 com a instância nova, parada no passo pedido', async () => {

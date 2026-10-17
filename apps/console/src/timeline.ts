@@ -5,18 +5,35 @@ import type { InstanceRecord } from '@ebb/store';
 /** Quanto de um id aparece na lista — o mesmo corte do CLI. */
 const SHORT = 8;
 
-export type Route = { view: 'list' } | { view: 'instance'; id: string; step?: number };
+export type Route =
+  | { view: 'dashboard' }
+  | { view: 'tasks'; instanceId?: string; tokenId?: string }
+  | { view: 'incidents'; instanceId?: string; tokenId?: string }
+  | { view: 'instance'; id: string; step?: number };
 
 /** A rota que o hash descreve. Qualquer coisa que não seja `#/i/<id>` é a lista. */
 export function parseRoute(hash: string): Route {
+  const task = /^#\/(tasks|incidents)(?:\/([^/]+)\/([^?]+))?$/.exec(hash);
+  if (task?.[1] === 'tasks' || task?.[1] === 'incidents') {
+    if (!task[2] || !task[3]) return { view: task[1] };
+    try {
+      return {
+        view: task[1],
+        instanceId: decodeURIComponent(task[2]),
+        tokenId: decodeURIComponent(task[3]),
+      };
+    } catch {
+      return { view: task[1] };
+    }
+  }
   const match = /^#\/i\/([^?]+)(?:\?(.*))?$/.exec(hash);
-  if (!match?.[1]) return { view: 'list' };
+  if (!match?.[1]) return { view: 'dashboard' };
   let id: string;
   try {
     id = decodeURIComponent(match[1]);
   } catch {
     // Escape malformado colado na barra: melhor a lista que uma exceção.
-    return { view: 'list' };
+    return { view: 'dashboard' };
   }
   const raw = new URLSearchParams(match[2] ?? '').get('step');
   const step = raw === null ? Number.NaN : Number(raw);
@@ -24,7 +41,11 @@ export function parseRoute(hash: string): Route {
 }
 
 export function routeTo(route: Route): string {
-  if (route.view === 'list') return '#/';
+  if (route.view === 'dashboard') return '#/';
+  if (route.view === 'tasks' || route.view === 'incidents') {
+    if (!route.instanceId || !route.tokenId) return `#/${route.view}`;
+    return `#/${route.view}/${encodeURIComponent(route.instanceId)}/${encodeURIComponent(route.tokenId)}`;
+  }
   const step = route.step === undefined ? '' : `?step=${route.step}`;
   return `#/i/${encodeURIComponent(route.id)}${step}`;
 }
