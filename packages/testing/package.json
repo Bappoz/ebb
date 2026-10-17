@@ -1,0 +1,35 @@
+{
+  "name": "@ebb/testing",
+  "version": "0.0.0",
+  "description": "Test BPMN processes like code: deterministic clocks, worker doubles, path assertions and sequence-flow coverage.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./vitest": {
+      "types": "./dist/vitest.d.ts",
+      "import": "./dist/vitest.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.lint.json"
+  },
+  "dependencies": {
+    "@bpmn-flow/core": "file:../../../bpmn-flow/packages/core",
+    "@ebb/runtime": "^0.0.0",
+    "@ebb/store": "^0.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  }
+}
