@@ -694,6 +694,214 @@ a {
   display: none;
 }
 
+.studio {
+  display: grid;
+  gap: 1rem;
+}
+
+.studio[hidden] {
+  display: none;
+}
+
+.studio-heading {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: space-between;
+  align-items: end;
+}
+
+.studio-heading h2 {
+  margin: 0;
+  font-family: Inter, Aptos, 'Segoe UI', system-ui, sans-serif;
+  font-size: 1.55rem;
+  letter-spacing: -0.04em;
+}
+
+.studio-heading p:not(.eyebrow) {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.studio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: end;
+}
+
+.studio-document-bar {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 2.8rem;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: #fff;
+  font-size: 0.76rem;
+}
+
+.studio-file-name {
+  overflow: hidden;
+  color: #454f63;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-status {
+  color: #798397;
+  text-align: right;
+}
+
+.studio-status.dirty {
+  color: #9a5d14;
+}
+
+.studio-status.error {
+  color: #a53838;
+}
+
+.studio-status.saved {
+  color: #16704f;
+}
+
+.studio-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 19rem;
+  min-height: 34rem;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 0.9rem;
+  background: #fff;
+  box-shadow: 0 0.3rem 1rem rgb(23 32 51 / 3%);
+}
+
+.studio-canvas-frame {
+  position: relative;
+  min-width: 0;
+  min-height: 34rem;
+  background-color: #fbfcfe;
+  background-image: radial-gradient(#dfe3ec 0.65px, transparent 0.65px);
+  background-size: 14px 14px;
+}
+
+.studio-canvas[hidden],
+.studio-empty[hidden] {
+  display: none;
+}
+
+.studio-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 34rem;
+}
+
+.studio-canvas .djs-container {
+  min-height: 34rem;
+}
+
+.studio-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  padding: 2rem;
+  color: var(--muted);
+  text-align: center;
+}
+
+.studio-empty h3 {
+  margin: 0.8rem 0 0.3rem;
+  color: var(--ink);
+  font-family: Inter, Aptos, 'Segoe UI', system-ui, sans-serif;
+  font-size: 1rem;
+}
+
+.studio-empty p {
+  max-width: 29rem;
+  margin: 0 0 1rem;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.studio-diagnostics {
+  overflow: auto;
+  border-left: 1px solid var(--line);
+  background: #fff;
+}
+
+.studio-diagnostics-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1rem 0;
+}
+
+.studio-diagnostics-head h3 {
+  margin: 0;
+  font-family: Inter, Aptos, 'Segoe UI', system-ui, sans-serif;
+  font-size: 0.98rem;
+}
+
+.studio-diagnostics .collection-help {
+  margin-bottom: 0.7rem;
+}
+
+.studio-issues {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0 0.8rem 1rem;
+  list-style: none;
+}
+
+.studio-issue {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.65rem 0.7rem;
+  border: 1px solid #eadfbf;
+  border-radius: 0.6rem;
+  color: #735011;
+  background: #fffaf0;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.studio-issue.error {
+  border-color: #f0d0cc;
+  color: #813535;
+  background: #fff6f5;
+}
+
+.studio-issue-link {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-issue-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
+.studio-node-reference {
+  width: fit-content;
+  padding: 0.12rem 0.36rem;
+  border-radius: 0.3rem;
+  color: #596174;
+  background: rgb(23 32 51 / 5%);
+  font-size: 0.68rem;
+}
+
 .diagram {
   min-height: 0;
   background-color: #fbfcfe;
@@ -934,6 +1142,31 @@ a {
     height: auto;
   }
 
+  .studio-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .studio-actions {
+    justify-content: start;
+  }
+
+  .studio-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-canvas-frame,
+  .studio-canvas,
+  .studio-canvas .djs-container {
+    min-height: 27rem;
+  }
+
+  .studio-diagnostics {
+    max-height: 20rem;
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
   .diagram {
     min-height: 25rem;
   }
@@ -964,5 +1197,15 @@ a {
   .form-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .studio-document-bar {
+    align-items: start;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .studio-status {
+    text-align: left;
   }
 }

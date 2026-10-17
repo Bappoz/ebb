@@ -15,6 +15,7 @@ import {
   startInstance,
 } from './api.js';
 import { lazy, serial } from './loading.js';
+import { StudioWorkspace } from './studio.js';
 import {
   clampStep,
   frameAt,
@@ -66,7 +67,8 @@ const dashboardView = byId('dashboard-view');
 const tasksView = byId('tasks-view');
 const incidentsView = byId('incidents-view');
 const debuggerView = byId('debugger-view');
-const views = [dashboardView, tasksView, incidentsView, debuggerView];
+const studioView = byId('studio-view');
+const views = [dashboardView, tasksView, incidentsView, debuggerView, studioView];
 const errorBox = byId('error');
 const successBox = byId('success');
 const crumb = byId('crumb');
@@ -91,6 +93,7 @@ let current: ReplayView | undefined;
 let shown = 0;
 let navigation = 0;
 let published: ProcessSummary[] = [];
+let studio: StudioWorkspace | undefined;
 
 function showError(error: unknown): void {
   errorBox.textContent = error instanceof Error ? error.message : String(error);
@@ -112,8 +115,9 @@ function setHeader(section: string, title: string): void {
   crumb.textContent = title;
 }
 
-function showView(target: HTMLElement, nav?: 'dashboard' | 'tasks' | 'incidents'): void {
+function showView(target: HTMLElement, nav?: 'dashboard' | 'tasks' | 'incidents' | 'studio'): void {
   for (const view of views) view.hidden = view !== target;
+  buttonById('open-start').hidden = target === studioView;
   for (const link of document.querySelectorAll<HTMLElement>('[data-nav]')) {
     link.classList.toggle('active', link.dataset.nav === nav);
   }
@@ -608,9 +612,45 @@ async function showInstance(id: string, step: number | undefined, ticket: number
   paint(target, frameAt(view, n));
 }
 
+async function showStudio(ticket: number): Promise<void> {
+  setHeader('Modelagem', 'BPMN Studio');
+  showView(studioView, 'studio');
+  if (!studio) {
+    studio = new StudioWorkspace(
+      {
+        canvas: byId('studio-canvas'),
+        empty: byId('studio-empty'),
+        fileInput: inputById('studio-file-input'),
+        fileName: byId('studio-file-name'),
+        status: byId('studio-document-status'),
+        issueCount: byId('studio-issue-count'),
+        issues: byId('studio-issues'),
+        create: buttonById('studio-new'),
+        open: buttonById('studio-open'),
+        openEmpty: buttonById('studio-empty-open'),
+        validate: buttonById('studio-validate'),
+        save: buttonById('studio-save'),
+        saveCopy: buttonById('studio-save-copy'),
+      },
+      showError,
+    );
+  }
+  await studio.enter();
+  if (ticket !== navigation) return;
+}
+
 async function render(): Promise<void> {
   const ticket = ++navigation;
   errorBox.hidden = true;
+  if (location.hash === '#/studio') {
+    current = undefined;
+    try {
+      await showStudio(ticket);
+    } catch (error) {
+      if (ticket === navigation) showError(error);
+    }
+    return;
+  }
   const route = parseRoute(location.hash);
   try {
     if (route.view !== 'instance') current = undefined;
@@ -705,5 +745,20 @@ forkButton.addEventListener('click', () => {
       forkButton.disabled = false;
     });
 });
-window.addEventListener('hashchange', () => void render());
+window.addEventListener('hashchange', (event) => {
+  const previousHash = new URL(event.oldURL).hash;
+  const nextHash = new URL(event.newURL).hash;
+  if (previousHash === '#/studio' && nextHash !== '#/studio' && studio?.isBusy) {
+    history.replaceState(null, '', '#/studio');
+    return;
+  }
+  if (previousHash === '#/studio' && nextHash !== '#/studio' && studio?.isDirty) {
+    if (!studio.confirmDiscard()) {
+      history.replaceState(null, '', '#/studio');
+      return;
+    }
+    studio.discard();
+  }
+  void render();
+});
 void render();

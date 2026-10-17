@@ -26,6 +26,9 @@
             <span class="nav-icon">!</span><span>Incidentes</span>
             <span id="incident-badge" class="nav-badge danger" hidden>0</span>
           </a>
+          <a href="#/studio" data-nav="studio">
+            <span class="nav-icon">◇</span><span>Modelagem</span>
+          </a>
         </nav>
 
         <div class="sidebar-foot">
@@ -166,6 +169,74 @@
               <section id="tasks"></section>
               <button id="fork" type="button" class="button secondary full">Bifurcar daqui</button>
             </aside>
+          </section>
+
+          <section id="studio-view" class="view studio" hidden>
+            <div class="studio-heading">
+              <div>
+                <p class="eyebrow">BPMN 2.0 · code-first</p>
+                <h2>Modele o processo junto do código.</h2>
+                <p>Abra um BPMN do projeto, edite no canvas e valide antes de salvar.</p>
+              </div>
+              <div class="studio-actions" aria-label="Ações do diagrama">
+                <button id="studio-new" type="button" class="button ghost">Novo diagrama</button>
+                <button id="studio-open" type="button" class="button secondary">Abrir BPMN</button>
+                <button id="studio-validate" type="button" class="button ghost" disabled>
+                  Validar
+                </button>
+                <button id="studio-save-copy" type="button" class="button ghost" hidden>
+                  Salvar cópia
+                </button>
+                <button id="studio-save" type="button" class="button primary" disabled>
+                  Salvar
+                </button>
+                <input
+                  id="studio-file-input"
+                  type="file"
+                  accept=".bpmn,.xml,application/xml,text/xml"
+                  hidden
+                />
+              </div>
+            </div>
+            <div class="studio-document-bar">
+              <span id="studio-file-name" class="studio-file-name">Nenhum arquivo aberto</span>
+              <span
+                id="studio-document-status"
+                class="studio-status"
+                role="status"
+                aria-live="polite"
+                >Crie um diagrama ou abra um arquivo BPMN.</span
+              >
+            </div>
+            <div class="studio-workspace">
+              <div class="studio-canvas-frame">
+                <div id="studio-canvas" class="studio-canvas" hidden></div>
+                <div id="studio-empty" class="studio-empty">
+                  <span class="empty-icon">◇</span>
+                  <h3>Comece por um arquivo do projeto</h3>
+                  <p>
+                    O Studio edita o BPMN visualmente e salva o XML no mesmo arquivo quando o
+                    navegador oferece acesso seguro a arquivos locais.
+                  </p>
+                  <button id="studio-empty-open" type="button" class="button secondary">
+                    Abrir arquivo BPMN
+                  </button>
+                </div>
+              </div>
+              <aside class="studio-diagnostics">
+                <div class="studio-diagnostics-head">
+                  <div>
+                    <p class="eyebrow">Verificação</p>
+                    <h3>Diagnósticos</h3>
+                  </div>
+                  <span id="studio-issue-count" class="count-pill">0</span>
+                </div>
+                <p class="collection-help">
+                  Confira estruturas que podem afetar a execução no ebb.
+                </p>
+                <ul id="studio-issues" class="studio-issues" aria-live="polite"></ul>
+              </aside>
+            </div>
           </section>
         </main>
       </div>

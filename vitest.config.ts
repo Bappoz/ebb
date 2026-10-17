@@ -11,11 +11,12 @@ export default defineConfig({
       include: ['packages/*/src/**/*.ts', 'apps/*/src/**/*.ts'],
       exclude: [
         '**/src/bin.ts',
-        // Fiação de navegador: DOM, fetch e o viewer. A lógica mora em
-        // timeline.ts e wire.ts, que ficam na conta.
+        // Fiação de navegador: DOM, fetch, viewer e file picker. A lógica
+        // determinística mora em timeline.ts e wire.ts, que ficam na conta.
         'apps/console/src/main.ts',
         'apps/console/src/api.ts',
         'apps/console/src/diagram-view.ts',
+        'apps/console/src/studio.ts',
       ],
       reporter: ['text', 'json-summary'],
       thresholds: {
