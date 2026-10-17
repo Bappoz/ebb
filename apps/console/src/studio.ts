@@ -116,6 +116,7 @@ export class StudioWorkspace {
     this.editor?.destroy();
     this.editor = undefined;
     this.stopListening = undefined;
+    this.initialization = undefined;
     this.handle = undefined;
     this.fileName = undefined;
     this.diskBaseline = undefined;
