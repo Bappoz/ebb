@@ -120,6 +120,12 @@ passo fez — e mostra payload, variáveis e a razão de cada gateway. "Bifurcar
 daqui" cria uma instância nova a partir do passo e a abre. O passo fica na URL
 (`#/i/<id>?step=2`), então o link leva ao mesmo lugar.
 
+**Modelagem** abre o BPMN Studio: importe um `.bpmn`, edite no canvas, valide e
+navegue dos diagnósticos aos elementos do diagrama. Em navegadores com acesso
+seguro a arquivos, ele salva no arquivo escolhido e detecta alterações externas;
+nos demais, oferece download da cópia editada. Publicar a versão pelo Studio e
+selecionar arquivos por uma árvore do projeto seguem no roadmap.
+
 Ele só atende em `127.0.0.1` e recusa `Host` de fora: ainda não há auth.
 
 ### API local
